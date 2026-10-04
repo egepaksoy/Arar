@@ -1,0 +1,38 @@
+# Python and build outputs
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+*.log
+
+# Local settings and credentials
+.arar/
+.env
+.env.*
+!.env.example
+.codex/
+.agents/
+
+# Source documents, exports and local QA files
+*.pdf
+Arar_islem_raporu*.json
+/Örnek/
+/Çıktı/
+/output/
+/tmp/
+/a/
+/test/
+/wheelhouse/
+
+# Editor and operating system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
