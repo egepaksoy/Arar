@@ -22,20 +22,28 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - Tkinter içeren bir Python kurulumu ve masaüstü oturumu.
 - `requirements.txt` içindeki Pillow, NumPy, pypdf ve pypdfium2 paketleri.
 
-Windows için `Başlat.bat` bulunur. EXE veya Python çalışma ortamı depoya dahil değildir.
+Windows için `Başlat.bat`, Unix / Linux / macOS için `baslat.sh` bulunur. EXE veya Python çalışma ortamı depoya dahil değildir.
 
 ## Çevrimdışı kurulum ve çalıştırma
 
 Python’u ve bilgisayarınızın Python sürümüne/mimarisine uygun wheel dosyalarını yerel
 kurulum ortamınızdan sağlayın. Wheel dosyalarını `wheelhouse` klasörüne yerleştirin:
 
+**Windows (PowerShell):**
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --no-index --find-links .\wheelhouse -r requirements.txt
 .\.venv\Scripts\python.exe main.py
 ```
 
-Sonraki açılışlarda **Başlat.bat** dosyasına çift tıklayabilirsiniz.
+**Unix / Linux / macOS (Bash/Sh):**
+```bash
+python3 -m venv .venv
+./.venv/bin/pip install --no-index --find-links ./wheelhouse -r requirements.txt
+./baslat.sh
+```
+
+Sonraki açılışlarda Windows'ta **Başlat.bat** dosyasına çift tıklayabilir, Unix sistemlerde ise terminalden `./baslat.sh` çalıştırabilirsiniz.
 Uygulama bağımlılık indirmez ve çalışırken ağ kullanmaz.
 
 ## Kullanım
@@ -102,6 +110,8 @@ ve dosyaları temizleme işlemini doğrular. Görünür bir masaüstü oturumu g
 
 ```text
 main.py              Uygulama başlangıcı ve ağ engeli
+Başlat.bat           Windows başlatma betiği
+baslat.sh            Unix / Linux / macOS başlatma betiği
 arar/app.py          Masaüstü arayüzü ve arka plan işlem kuyruğu
 arar/models.py       Sayfa kararları, ayarlar ve belge grupları
 arar/detection.py    Yerel barkod/başlık/mühür incelemesi
