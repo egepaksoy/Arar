@@ -42,7 +42,8 @@ Başlatıcı uyumlu Python’u seçer ve `prepare_local_libs.py --launch` üzeri
 yerel paketleri kontrol ederek uygulamayı açar. Eksik veya uyumsuz paketler varsa
 `wheelhouse/` içindeki uygun wheel dosyalarından ya da mevcut kurulu paketlerden
 otomatik hazırlık yapar. Bu açılış akışı internetten paket indirmez.
-Paketleri geliştirme bilgisayarında hazırlamak için **setup_offline_libs.bat** kullanılır.
+Paketleri geliştirme bilgisayarında hazırlamak için Windows’ta **setup_offline_libs.bat**,
+Linux/Unix/macOS’ta **setup_offline_libs.sh** kullanılır.
 Mevcut dolu `libs/` korunur; `--replace` seçeneği doğrulanan yeni kopyayı yerleştirirken
 eski klasörü yedekler. Kurulu paketlerden indirimsiz hazırlık için `--from-installed`,
 yerel wheel dosyaları için `--wheelhouse wheelhouse` seçenekleri bulunur.
@@ -126,6 +127,7 @@ main.py              Uygulama başlangıcı ve ağ engeli
 local_dependencies.py Proje içindeki libs paketlerini yükleme
 libs/                Hazır üçüncü taraf paketler ve native dosyalar
 setup_offline_libs.bat Geliştirme bilgisayarında bağımlılık hazırlığı
+setup_offline_libs.sh Linux/Unix/macOS için bağımlılık hazırlığı
 prepare_local_libs.py Güvenli hazırlık, doğrulama ve yedekleme
 README_OFFLINE.md    Taşıma, çalıştırma ve uyumluluk rehberi
 baslat.bat           Windows başlatma betiği

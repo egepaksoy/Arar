@@ -36,6 +36,16 @@ yerel wheel dosyalarını veya mevcut kurulu paketleri otomatik kullanabilir.
 setup_offline_libs.bat
 ```
 
+Linux/Unix/macOS üzerinde aynı hazırlık için:
+
+```sh
+./setup_offline_libs.sh
+```
+
+Çalıştırma izni korunmamış bir kopyada `sh setup_offline_libs.sh` da kullanılabilir.
+Betik Tkinter içeren CPython 3.12’yi otomatik bulur ve aynı `prepare_local_libs.py`
+mekanizmasını kullanır. Paketler hazırlığın yapıldığı işletim sistemi ve mimariye göre kurulur.
+
 Betik `python -m pip install -r requirements.txt -t ...` mantığıyla paketleri
 proje içindeki geçici bir klasöre kurar; kaynak koddan derleme yerine hazır binary
 wheel dosyalarını ister. İzole bir Python işleminde import, görüntü, NumPy hesaplama
@@ -60,8 +70,22 @@ Yerel wheel arşivinden, ağ kullanmadan hazırlamak için:
 setup_offline_libs.bat --wheelhouse wheelhouse
 ```
 
+Linux/Unix için eşdeğer çevrimdışı seçenekler ve güvenli güncelleme:
+
+```sh
+./setup_offline_libs.sh --from-installed
+./setup_offline_libs.sh --wheelhouse wheelhouse
+./setup_offline_libs.sh --replace --wheelhouse wheelhouse
+```
+
+Tüm seçenekler, boşluk içeren yollar dahil Python hazırlık scriptine aktarılır.
+Gerekirse `ARAR_PYTHON=/uygun/python3.12 ./setup_offline_libs.sh --from-installed`
+ile yorumlayıcı seçilebilir. İnternetsiz hazırlıkta ilgili Unix platformuna uygun
+kurulu paketler veya wheel dosyaları gerekir; Windows paketleri kullanılamaz.
+
 Bu seçenek pip’e `--no-index` ve `--find-links` verir. Wheel klasöründe Python 3.12,
-Windows x64 için uyumlu dosyalar bulunmalıdır. Pip yalnızca bu hazırlık adımında gereklidir.
+hazırlığın yapıldığı işletim sistemi/mimari için uyumlu dosyalar bulunmalıdır.
+Pip yalnızca wheel/çevrimiçi kurulum seçilen hazırlık adımında gereklidir.
 
 Birden fazla Python varsa PowerShell’de uygun hazırlık yorumlayıcısını seçebilirsiniz:
 
@@ -93,6 +117,7 @@ Arar/
 ├── tests/
 ├── requirements.txt
 ├── setup_offline_libs.bat
+├── setup_offline_libs.sh
 ├── prepare_local_libs.py
 └── README_OFFLINE.md
 ```
