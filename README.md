@@ -14,37 +14,41 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - İşlenen sayfalarda yeşil tik, kullanıcı incelemesi gerekenlerde kırmızı işaret.
 - Sırayla gruplama veya art arda kapaklara ortak devam sayfalarını ekleme.
 - Sonraki Receiving Report barkodlarında isteğe bağlı duraklama.
+- Kapak işaretleme onay sorusunu ayarlardan açma veya kapatma.
+- PDF analizi tamamlandığında ayarlardan açılıp kapatılabilen “Tarama bitti” bildirimi.
 - Barkod adıyla PDF kaydı, çakışan isimlere numara ekleme ve JSON işlem raporu.
 
 ## Gereksinimler
 
-- Python 3.10 veya üzeri.
+- Hazırlanan `libs/` kopyası için CPython 3.12.x, Windows x64.
 - Tkinter içeren bir Python kurulumu ve masaüstü oturumu.
-- `requirements.txt` içindeki Pillow, NumPy, pypdf ve pypdfium2 paketleri.
+- Projeyle birlikte taşınan dolu `libs/` klasörü (Pillow, NumPy, pypdf ve pypdfium2).
 
-Windows için `Başlat.bat`, Unix / Linux / macOS için `baslat.sh` bulunur. EXE veya Python çalışma ortamı depoya dahil değildir.
+Windows için `baslat.bat`, Unix / Linux / macOS için `baslat.sh` bulunur.
+Windows binary paketleri diğer işletim sistemlerinde çalışmaz; bu platformlar için ayrı libs hazırlığı gerekir.
+EXE veya Python çalışma ortamı depoya dahil değildir.
 
 ## Çevrimdışı kurulum ve çalıştırma
 
-Python’u ve bilgisayarınızın Python sürümüne/mimarisine uygun wheel dosyalarını yerel
-kurulum ortamınızdan sağlayın. Wheel dosyalarını `wheelhouse` klasörüne yerleştirin:
+Hedef bilgisayara `libs/` ve `assets/` dahil proje klasörünü kopyalayın. Uyumlu
+Python kurulumu ile hedefte yalnızca şu komutu çalıştırın; pip veya internet gerekmez:
 
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --no-index --find-links .\wheelhouse -r requirements.txt
-.\.venv\Scripts\python.exe main.py
+```bat
+python main.py
 ```
 
-**Unix / Linux / macOS (Bash/Sh):**
-```bash
-python3 -m venv .venv
-./.venv/bin/pip install --no-index --find-links ./wheelhouse -r requirements.txt
-./baslat.sh
-```
+Windows’ta **baslat.bat** dosyasına çift tıklamak, Unix’te **baslat.sh** çalıştırmak yeterlidir.
+Başlatıcı uyumlu Python’u seçer ve `prepare_local_libs.py --launch` üzerinden
+yerel paketleri kontrol ederek uygulamayı açar. Eksik veya uyumsuz paketler varsa
+`wheelhouse/` içindeki uygun wheel dosyalarından ya da mevcut kurulu paketlerden
+otomatik hazırlık yapar. Bu açılış akışı internetten paket indirmez.
+Paketleri geliştirme bilgisayarında hazırlamak için **setup_offline_libs.bat** kullanılır.
+Mevcut dolu `libs/` korunur; `--replace` seçeneği doğrulanan yeni kopyayı yerleştirirken
+eski klasörü yedekler. Kurulu paketlerden indirimsiz hazırlık için `--from-installed`,
+yerel wheel dosyaları için `--wheelhouse wheelhouse` seçenekleri bulunur.
+Doğrudan `main.py` mevcut yerel paketleri kullanır. Uygulama çalışırken ağ kullanmaz.
 
-Sonraki açılışlarda Windows'ta **Başlat.bat** dosyasına çift tıklayabilir, Unix sistemlerde ise terminalden `./baslat.sh` çalıştırabilirsiniz.
-Uygulama bağımlılık indirmez ve çalışırken ağ kullanmaz.
+Hazırlama, taşıma ve Python uyumluluğu: [README_OFFLINE.md](README_OFFLINE.md).
 
 ## Kullanım
 
@@ -58,7 +62,16 @@ Uygulama bağımlılık indirmez ve çalışırken ağ kullanmaz.
 Kaynak dosyalar diskte kalır. Dosya kaldırma ve temizleme, aktif işlem bittikten sonra kullanılabilir.
 Analizi durdurmak için **Durdur** düğmesini kullanabilirsiniz.
 
-Detaylı kurallar ve ekran kontrolleri: [KULLANIM.md](KULLANIM.md).
+**Ayarlar → Kapak işaretleme → Kapak olarak işaretlerken onay sor** seçeneği
+varsayılan olarak açıktır. Kapatıp **Ayarları kaydet** düğmesine bastığınızda
+manuel kapak işaretleme onay sorusu gösterilmez. Seçiminiz sonraki açılışlarda korunur;
+kapak numarası girme gerekliliği devam eder.
+
+**Ayarlar → Tamamlanma bildirimi → Tarama bittiğinde uyarı göster** seçeneği
+varsayılan olarak açıktır. PDF sayfalarının analizi tamamlandığında bildirim gösterir;
+durdurulan analizde gösterilmez. Seçiminiz kaydedilir.
+
+Çevrimdışı kullanım ve sorun giderme: [README_OFFLINE.md](README_OFFLINE.md).
 
 ## Çevrimdışı çalışma
 
@@ -84,7 +97,7 @@ klasörüne kaydedilir; sayfa kararları oturum içinde tutulur.
 ## Testler
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+python -S -m unittest discover -s tests -v
 ```
 
 Temel testler gruplama, barkod doğrulama, PDF kaydı, değişmiş kaynakları reddetme
@@ -99,7 +112,7 @@ Masaüstü arayüz testlerini de çalıştırmak için:
 
 ```powershell
 $env:ARAR_UI_TESTS = '1'
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+python -S -m unittest discover -s tests -v
 Remove-Item Env:ARAR_UI_TESTS
 ```
 
@@ -110,7 +123,12 @@ ve dosyaları temizleme işlemini doğrular. Görünür bir masaüstü oturumu g
 
 ```text
 main.py              Uygulama başlangıcı ve ağ engeli
-Başlat.bat           Windows başlatma betiği
+local_dependencies.py Proje içindeki libs paketlerini yükleme
+libs/                Hazır üçüncü taraf paketler ve native dosyalar
+setup_offline_libs.bat Geliştirme bilgisayarında bağımlılık hazırlığı
+prepare_local_libs.py Güvenli hazırlık, doğrulama ve yedekleme
+README_OFFLINE.md    Taşıma, çalıştırma ve uyumluluk rehberi
+baslat.bat           Windows başlatma betiği
 baslat.sh            Unix / Linux / macOS başlatma betiği
 arar/app.py          Masaüstü arayüzü ve arka plan işlem kuyruğu
 arar/models.py       Sayfa kararları, ayarlar ve belge grupları
@@ -126,8 +144,8 @@ tests/               Temel ve isteğe bağlı arayüz testleri
 
 `.gitignore`; yerel ayarları, PDF’leri, örnek belgeleri, çıktı raporlarını,
 geçici dosyaları, Python ortamlarını ve yerel wheel dosyalarını dışarıda tutar.
-Gerekli görsel şablonlar depoya dahildir. `.gitattributes` metin dosyalarının
-satır sonlarını düzenler.
+Gerekli görsel şablonlar ve `libs/` paketleri depoya dahildir. `.gitattributes` metin
+dosyalarının satır sonlarını düzenler; libs içindeki üçüncü taraf dosyaların içeriğini korur.
 
 GitHub’da boş bir depo oluşturduktan sonra aşağıdaki `DEPO_ADRESI` yerine
 GitHub’ın gösterdiği depo adresini yazın. Bu komutları proje klasöründe çalıştırın:

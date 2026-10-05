@@ -2,6 +2,8 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from local_dependencies import activate_local_dependencies
+activate_local_dependencies()
 import numpy as np
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
@@ -9,7 +11,7 @@ from pypdf.generic import DictionaryObject,NameObject,DecodedStreamObject
 from arar.barcodes import WIDTHS, read_barcodes
 from arar.detection import analyze_page, list_pages, render_page
 from arar.exporter import export_groups, safe_filename
-from arar.models import PageResult, DocumentGroup, build_groups, ROOT
+from arar.models import PageResult, DocumentGroup, Settings, build_groups, ROOT
 from arar.offline import local_path
 
 EXAMPLES_AVAILABLE=all((ROOT/'Örnek/Kolay'/f'Örnek-{i}.pdf').is_file() for i in (1,3,4,6,9))
@@ -18,6 +20,29 @@ requires_examples=unittest.skipUnless(EXAMPLES_AVAILABLE,'Yerel örnek PDF’ler
 
 def page(i,state='attachment',source='a.pdf',number=''):
     return PageResult(source,i,barcode=number,state=state)
+
+
+class SettingsTests(unittest.TestCase):
+    def test_older_settings_keep_cover_confirmation_enabled(self):
+        with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
+            settings_dir=Path(folder)/'.arar'
+            settings_dir.mkdir()
+            (settings_dir/'settings.json').write_text('{"grouping":"shared"}',encoding='utf-8')
+            settings=Settings.load()
+            self.assertEqual(settings.grouping,'shared')
+            self.assertTrue(settings.confirm_cover)
+            self.assertTrue(settings.notify_analysis_done)
+
+    def test_cover_confirmation_choice_survives_reload(self):
+        with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
+            settings=Settings()
+            for enabled in (False,True):
+                with self.subTest(enabled=enabled):
+                    settings.confirm_cover=enabled
+                    settings.notify_analysis_done=enabled
+                    settings.save()
+                    self.assertEqual(Settings.load().confirm_cover,enabled)
+                    self.assertEqual(Settings.load().notify_analysis_done,enabled)
 
 
 class GroupingTests(unittest.TestCase):

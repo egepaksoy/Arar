@@ -29,6 +29,10 @@ Arar_islem_raporu*.json
 /a/
 /test/
 /wheelhouse/
+/.libs-stage-*/
+/libs.backup-*/
+
+# libs/ is intentionally included: it travels with the offline application.
 
 # Editor and operating system files
 .idea/

@@ -11,6 +11,8 @@ class Settings:
     grouping: str = 'sequential'
     pause_on_later_barcode: bool = False
     output_dir: str = str(ROOT / 'Çıktı')
+    confirm_cover: bool = True
+    notify_analysis_done: bool = True
 
     @classmethod
     def load(cls):
@@ -20,6 +22,8 @@ class Settings:
             if settings.grouping not in ('shared', 'sequential'):
                 settings.grouping = 'sequential'
             settings.pause_on_later_barcode = bool(settings.pause_on_later_barcode)
+            settings.confirm_cover = bool(settings.confirm_cover)
+            settings.notify_analysis_done = bool(settings.notify_analysis_done)
             settings.output_dir = str(local_path(settings.output_dir))
             return settings
         except (OSError, ValueError, TypeError):

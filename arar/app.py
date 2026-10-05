@@ -601,7 +601,7 @@ class ArarApp:
         if not number:
             messagebox.showwarning('Kapak numarası gerekli','Receiving Report numarasını girin.')
             return
-        if page.state!='cover' and not messagebox.askyesno('Kapak kararını onaylayın',
+        if self.settings.confirm_cover and page.state!='cover' and not messagebox.askyesno('Kapak kararını onaylayın',
                 page.reason+'\n\nBu sayfayı kullanıcı kararıyla kapak yapmak istiyor musunuz?'):
             return
         page.manual_barcode=number
@@ -680,7 +680,7 @@ class ArarApp:
             return
         dialog=tk.Toplevel(self.root)
         dialog.title('Arar • Ayarlar')
-        dialog.geometry('590x425')
+        dialog.geometry('590x590')
         dialog.resizable(False,False)
         dialog.configure(bg=WHITE)
         dialog.transient(self.root)
@@ -698,10 +698,18 @@ class ArarApp:
         ttk.Checkbutton(dialog,text='İlk sayfadan sonra Receiving Report barkodu bulunursa sor',variable=pause).pack(anchor='w',padx=24)
         self.label(dialog,'Belirsiz mühürler her iki ayarda da kullanıcı kararı bekler.',
                    size=9,color=MUTED).pack(anchor='w',padx=24,pady=12)
+        self.label(dialog,'Kapak işaretleme',size=12,bold=True).pack(anchor='w',padx=24,pady=(12,10))
+        confirm_cover=tk.BooleanVar(value=self.settings.confirm_cover)
+        ttk.Checkbutton(dialog,text='Kapak olarak işaretlerken onay sor',variable=confirm_cover).pack(anchor='w',padx=24)
+        self.label(dialog,'Tamamlanma bildirimi',size=12,bold=True).pack(anchor='w',padx=24,pady=(18,10))
+        notify_done=tk.BooleanVar(value=self.settings.notify_analysis_done)
+        ttk.Checkbutton(dialog,text='Tarama bittiğinde uyarı göster',variable=notify_done).pack(anchor='w',padx=24)
         def save():
             try:
                 self.settings.grouping=grouping.get()
                 self.settings.pause_on_later_barcode=pause.get()
+                self.settings.confirm_cover=confirm_cover.get()
+                self.settings.notify_analysis_done=notify_done.get()
                 self.settings.save()
             except (OSError,ValueError) as exc:
                 messagebox.showerror('Ayarlar kaydedilemedi',str(exc),parent=dialog)
@@ -757,6 +765,11 @@ class ArarApp:
                     if review is not None and not self.review_during_analysis:
                         self.page_tree.selection_set(str(review))
                         self.page_tree.see(str(review))
+                    if not event[1] and self.settings.notify_analysis_done:
+                        count=sum(p.effective_state=='review' for p in self.pages)
+                        messagebox.showinfo('Tarama bitti',
+                            f'{len(self.pages)} PDF sayfasının barkod ve mühür analizi tamamlandı.\n\n'
+                            f'İnceleme bekleyen sayfa: {count}',parent=self.root)
                 elif kind=='preview':
                     _,generation,key,data=event
                     if key[0] not in self.sources:

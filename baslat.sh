@@ -1,40 +1,29 @@
 #!/bin/sh
-set -e
+SCRIPT_PARENT=${0%/*}
+if [ "$SCRIPT_PARENT" = "$0" ]; then SCRIPT_PARENT=.; fi
+SCRIPT_DIR=$(CDPATH= cd -- "$SCRIPT_PARENT" && pwd) || exit 1
+cd "$SCRIPT_DIR" || exit 1
+export PYTHONUTF8=1
 
-# Betiğin bulunduğu dizine geç
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+compatible() {
+    "$1" -c 'import sys, tkinter; sys.exit(0 if sys.implementation.name == "cpython" and sys.version_info[:2] == (3, 12) else 1)' >/dev/null 2>&1
+}
 
-# 1. Proje içi yerel sanal ortam (.venv)
-if [ -x ".venv/bin/python3" ]; then
-    exec ".venv/bin/python3" "main.py" "$@"
-elif [ -x ".venv/bin/python" ]; then
-    exec ".venv/bin/python" "main.py" "$@"
-fi
-
-# 2. Ortam değişkeni ile belirtilen Python yolu
-if [ -n "$ARAR_PYTHON" ] && [ -x "$ARAR_PYTHON" ]; then
-    exec "$ARAR_PYTHON" "main.py" "$@"
-fi
-
-# 3. Kullanıcı önbelleğindeki runtime (varsa)
-CODEX_PYTHON="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
-if [ -x "$CODEX_PYTHON" ]; then
-    exec "$CODEX_PYTHON" "main.py" "$@"
-fi
-
-# 4. Sistem Python 3
-if command -v python3 >/dev/null 2>&1; then
-    exec python3 "main.py" "$@"
-fi
-
-# 5. Sistem 'python' komutu (Python 3 ise)
-if command -v python >/dev/null 2>&1; then
-    if python -c "import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)" >/dev/null 2>&1; then
-        exec python "main.py" "$@"
+if [ -n "${ARAR_PYTHON:-}" ]; then
+    if compatible "$ARAR_PYTHON"; then
+        exec "$ARAR_PYTHON" -B "$SCRIPT_DIR/prepare_local_libs.py" --launch "$@"
     fi
+    echo "ARAR_PYTHON uyumlu değil. Tkinter içeren CPython 3.12.x gerekli." >&2
+    exit 1
 fi
 
-echo "Python 3 ve gerekli kütüphaneler bulunamadı." >&2
-echo "Lütfen .venv ortamını kurun veya README.md dosyasındaki kurulum adımlarını uygulayın." >&2
+for candidate in "$SCRIPT_DIR/.venv/bin/python3" "$SCRIPT_DIR/.venv/bin/python" \
+    python3.12 python3 python \
+    "$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"; do
+    if compatible "$candidate"; then
+        exec "$candidate" -B "$SCRIPT_DIR/prepare_local_libs.py" --launch "$@"
+    fi
+done
+
+echo "Tkinter içeren CPython 3.12.x bulunamadı. README_OFFLINE.md dosyasını okuyun." >&2
 exit 1
