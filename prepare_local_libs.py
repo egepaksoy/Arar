@@ -4,6 +4,7 @@ import base64
 import csv
 from datetime import datetime
 import hashlib
+import importlib
 import importlib.metadata as metadata
 import json
 from pathlib import Path
@@ -113,16 +114,39 @@ def copy_installed(packages, stage):
                 csv.writer(handle).writerows(records)
 
 
+def check_runtime():
+    if sys.implementation.name != 'cpython' or sys.version_info[:2] < (3, 11):
+        raise ValueError(
+            f'CPython 3.11 veya üzeri gerekli. Bulunan Python: {sys.version.split()[0]} '
+            f'({sys.executable}). Paketler bu sürüm ve platform için hazırlanmalıdır.')
+    try:
+        importlib.import_module('tkinter')
+    except (ImportError, OSError) as exc:
+        raise ValueError(
+            f'Python {sys.version.split()[0]} bulundu, ancak Tkinter/Tcl/Tk yüklenemedi. '
+            f'Kullanılan Python: {sys.executable}.\n'
+            'Tkinter bir pip paketi değildir; bu Python sürümüne uygun Tcl/Tk desteği '
+            'işletim sistemi/Python kurulumunda bulunmalıdır. İnternetsiz ortamda '
+            'yerel sistem kurulum paketleri gerekir.\nAyrıntı: ' + str(exc)) from exc
+
+
 def prepare(args):
-    if sys.implementation.name != 'cpython' or sys.version_info[:2] != (3, 12):
-        raise ValueError('Hazırlık için CPython 3.12.x kullanın; hedefte aynı mimari olmalıdır.')
+    check_runtime()
     if LIBS.is_symlink() or (hasattr(LIBS, 'is_junction') and LIBS.is_junction()):
         raise ValueError('libs gerçek bir proje klasörü olmalı; dosya bağlantısı kullanmayın.')
     if LIBS.exists() and not LIBS.is_dir():
         raise ValueError('libs adıyla bir dosya var. Klasör hazırlanamıyor.')
     populated = LIBS.is_dir() and any(LIBS.iterdir())
     if populated and not args.replace:
-        raise ValueError('libs zaten dolu. Güncellemek için --replace kullanın; eski sürüm yedeklenir.')
+        try:
+            expected = json.loads((LIBS / 'arar_bundle.json').read_text(encoding='utf-8'))['runtime']
+        except (OSError, ValueError, KeyError, TypeError):
+            expected = None
+        current = runtime_identity()
+        if isinstance(expected, dict) and set(expected) == set(current) and expected != current:
+            print('libs başka bir Python/platform için hazırlanmış. Yeni kopya doğrulanınca eskisi yedeklenecek.',flush=True)
+        else:
+            raise ValueError('libs zaten dolu. Güncellemek için --replace kullanın; eski sürüm yedeklenir.')
     packages = pinned_requirements()
     # tempfile.mkdtemp uses owner-only ACLs on Windows. A bundle must inherit
     # the project's permissions so the normal desktop user can also read it.
@@ -178,8 +202,7 @@ def verify_local_bundle():
 
 def launch(args):
     """Repair only from local sources. Launchers never use an online index."""
-    if sys.implementation.name != 'cpython' or sys.version_info[:2] != (3, 12):
-        raise ValueError('Başlatmak için Tkinter içeren CPython 3.12.x kullanın.')
+    check_runtime()
     try:
         verify_local_bundle()
     except ValueError:

@@ -43,14 +43,16 @@ Linux/Unix/macOS üzerinde aynı hazırlık için:
 ```
 
 Çalıştırma izni korunmamış bir kopyada `sh setup_offline_libs.sh` da kullanılabilir.
-Betik Tkinter içeren CPython 3.12’yi otomatik bulur ve aynı `prepare_local_libs.py`
+Betik CPython 3.11 veya üzerini otomatik bulur ve aynı `prepare_local_libs.py`
 mekanizmasını kullanır. Paketler hazırlığın yapıldığı işletim sistemi ve mimariye göre kurulur.
 
 Betik `python -m pip install -r requirements.txt -t ...` mantığıyla paketleri
 proje içindeki geçici bir klasöre kurar; kaynak koddan derleme yerine hazır binary
 wheel dosyalarını ister. İzole bir Python işleminde import, görüntü, NumPy hesaplama
 ve PDF render kontrollerinden geçerse klasörü `libs/` olarak yerleştirir.
-Mevcut dolu bir `libs/` klasörünü varsayılan olarak değiştirmez.
+Mevcut ortamla uyumlu dolu bir `libs/` klasörünü varsayılan olarak değiştirmez.
+Başka işletim sistemi, mimari veya Python sürümünden taşınmış bir bundle varsa
+yeni kopyayı doğruladıktan sonra eskisini yedekleyerek otomatik değiştirir.
 
 Paketler aynı Python ortamında zaten kuruluysa **hiçbir indirme yapmadan**:
 
@@ -138,7 +140,9 @@ python main.py
 
 Tek adımlı önerilen açılış: Windows’ta **baslat.bat** dosyasına çift tıklayın;
 Unix’te **baslat.sh** dosyasını çalıştırın (`sh baslat.sh` da kullanılabilir).
-Başlatıcı Tkinter içeren CPython 3.12’yi otomatik arar ve
+Unix başlatıcı CPython 3.11 veya üzerini otomatik arar; Windows başlatıcı hazır
+Windows bundle için CPython 3.12’yi tercih eder. Seçilen Python’un Tkinter desteği
+ayrı kontrol edilir. Başlatıcı
 `prepare_local_libs.py --launch` çağırır. Hazır yerel paketler doğrulanınca uygulamayı açar.
 Windows’ta hazırlık bitince uygulama konsolsuz açılır.
 
@@ -150,8 +154,9 @@ Hiçbir yerel kaynak bulunamazsa anlaşılır hata gösterir; internetten indirm
 
 Windows’ta mevcut bundle için CPython 3.12 x64 gerekir. Unix’te ilgili işletim
 sistemi/mimari için yerel paketler veya uygun wheel dosyaları bulunmalıdır;
-Windows DLL’leri Unix’te kullanılamaz. Uyumlu Python/Tkinter kurulumu başlatıcının
-kendisini çalıştırmak için gereklidir; işletim sistemi kurulumları otomatik indirilmez.
+Windows DLL’leri Unix’te kullanılamaz. Uyumlu Python başlatıcıyı çalıştırmak için,
+Tkinter/Tcl/Tk ise uygulama ve paket doğrulaması için gereklidir; işletim sistemi
+kurulumları otomatik indirilmez.
 
 `main.py` ve `arar` paketinin giriş noktası aynı `local_dependencies.py` mekanizmasını
 kullanır. `libs/` import yolunun başına eklenir; kritik paketlerin gerçekten bu klasörden
@@ -188,8 +193,10 @@ kilitleyebilir. Güncellenmiş projeyi hedef bilgisayara yeniden taşıyın.
 
 ## Python Version Compatibility
 
-Hazırlık scripti CPython **3.12.x** ister. Aynı 3.12 serisindeki farklı patch sürümleri
-kullanılabilir. Mevcut bundle Windows x64 içindir; Windows ARM64, 32 bit Python,
+Hazırlık scripti CPython **3.11 veya üzerini** kabul eder. Seçilen Python sürümü ve
+platform için requirements’taki sürümlerin uyumlu binary wheel dosyaları bulunmalıdır;
+uygun wheel bulunamazsa kurulum bunu bildirir. Mevcut kopya CPython 3.12 Windows x64
+ile sınanmıştır. Bu bundle Windows x64 içindir; Windows ARM64, 32 bit Python,
 Python 3.11/3.13 veya Linux/macOS üzerinde bu binary dosyalar kullanılamaz.
 Bu ortamlar için uygun yorumlayıcıyla ayrı paket hazırlığı ve test gerekir.
 
@@ -211,6 +218,10 @@ dağıtım için hazırlık scriptini kullanın.
   eksikse ilgili çevrimdışı kurulum ortamını kullanın. Python ve işletim sistemi DLL’leri
   bu paket kopyasının kapsamı dışındadır.
 - **No module named tkinter / TclError:** Tcl/Tk içeren normal bir Python kurulumu gerekir.
+- **Python bulundu, ancak Tkinter/Tcl/Tk yüklenemedi:** Python sürümü ile Tkinter
+  desteği ayrı kontrol edilir. Tkinter bir pip paketi değildir; seçilen yorumlayıcıya
+  uygun sistem Tcl/Tk desteği kurulmalıdır. İnternetsiz Linux’ta dağıtıma/sürüme uygun
+  sistem kurulum paketleri yerel ortamdan sağlanmalıdır. `libs/` hazırlığı bunu indirmez.
 - **libs zaten dolu:** Yenileme bilinçli olarak engellenmiştir; geliştirme bilgisayarında
   `--replace` ile eski klasör yedeği korunarak güncelleyin.
 - **Kayıt klasörü bulunamıyor:** Projeyle eski `.arar` ayarlarını taşıdıysanız yeni bilgisayarda

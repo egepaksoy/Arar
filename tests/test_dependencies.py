@@ -56,6 +56,28 @@ class DependencyTests(unittest.TestCase):
             self.assertIn('uyumlu', result.stderr)
 
 
+class RuntimeTests(unittest.TestCase):
+    def test_python_versions_are_not_restricted_to_312(self):
+        for version in ((3,11),(3,12),(3,13),(3,14)):
+            with self.subTest(version=version),patch.object(preparation.sys,'version_info',version), \
+                    patch.object(preparation.importlib,'import_module'):
+                preparation.check_runtime()
+
+    def test_old_python_is_reported_separately_from_tkinter(self):
+        with patch.object(preparation.sys,'version_info',(3,10)), \
+                patch.object(preparation.importlib,'import_module') as load:
+            with self.assertRaisesRegex(ValueError,'3.11'):
+                preparation.check_runtime()
+            load.assert_not_called()
+
+    def test_missing_tkinter_identifies_the_selected_interpreter(self):
+        with patch.object(preparation.importlib,'import_module',side_effect=ModuleNotFoundError('tkinter')):
+            with self.assertRaisesRegex(ValueError,'Tkinter/Tcl/Tk') as error:
+                preparation.check_runtime()
+            self.assertIn(sys.executable,str(error.exception))
+            self.assertIn('pip paketi değildir',str(error.exception))
+
+
 class LaunchTests(unittest.TestCase):
     def run_launch(self,verify_error=None,source_error=None,wheels=False):
         with tempfile.TemporaryDirectory() as folder,ExitStack() as stack:
@@ -100,6 +122,23 @@ class LaunchTests(unittest.TestCase):
 
 
 class PreparationTests(unittest.TestCase):
+    def test_foreign_platform_bundle_is_reprepared_without_manual_replace(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            libs=root/'libs'
+            libs.mkdir()
+            expected=dependencies.runtime_identity()
+            expected['platform']='different-platform'
+            (libs/'arar_bundle.json').write_text(json.dumps({'runtime':expected}),encoding='utf-8')
+            (libs/'keep.txt').write_text('old bundle',encoding='utf-8')
+            with patch.object(preparation,'ROOT',root),patch.object(preparation,'LIBS',libs), \
+                    patch.object(preparation,'pinned_requirements',return_value={}), \
+                    patch.object(preparation,'copy_installed'),patch.object(preparation.subprocess,'run'),patch('builtins.print'):
+                preparation.prepare(argparse.Namespace(replace=False,from_installed=True,wheelhouse=None))
+            backup=next(root.glob('libs.backup-*'))
+            self.assertEqual((backup/'keep.txt').read_text(encoding='utf-8'),'old bundle')
+            self.assertEqual(json.loads((libs/'arar_bundle.json').read_text(encoding='utf-8'))['runtime'],dependencies.runtime_identity())
+
     def test_existing_libs_is_not_modified_without_replace(self):
         with tempfile.TemporaryDirectory() as folder:
             libs = Path(folder) / 'libs'
