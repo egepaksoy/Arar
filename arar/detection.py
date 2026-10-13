@@ -163,7 +163,8 @@ def list_pages(source):
         return [PageResult(str(source),i,source_signature=signature) for i in range(len(doc))]
 
 
-def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshold=.74):
+def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshold=.74,
+                 review_other_barcodes=True, review_missing_stamp=True):
     evidence=[]
     targets=[]
     others=[]
@@ -231,7 +232,7 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
                             others.append(b.value)
                     if targets:
                         break
-                if targets and fallback:
+                if (targets and fallback) or (result.index==0 and not targets and not evidence):
                     small=full.resize((round(full.width/4*1.25),round(full.height/4*1.25)))
                     evidence.extend(_scan_stamps(small,1.25,cancel,min_score=scan_stamp_threshold))
         finally:
@@ -245,7 +246,10 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
     kinds={f.kind for f in evidence}
     result.stamp='mixed' if 'blue' in kinds and ('black' in kinds or 'faint' in kinds) else (
         'black' if 'black' in kinds else 'faint' if 'faint' in kinds else 'blue' if 'blue' in kinds else 'none')
-    if len(unique)>1:
+    result.first_page_error=result.index==0 and not targets and result.stamp=='none'
+    if result.first_page_error:
+        result.state,result.reason='review','İlk sayfada Receiving Report No ve herhangi bir mühür bulunamadı. Dosyayı kontrol edin.'
+    elif len(unique)>1:
         result.state,result.reason='review','Birden fazla Receiving Report numarası var. Kapak numarasını belirleyin.'
     elif targets and not result.barcode:
         result.state,result.reason='review','Receiving Report barkodu okunamadı.'
@@ -256,13 +260,15 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
             result.state,result.reason='review','Taranmış sayfada mavi mühür adayı. Diğer mühürleri kontrol edip onaylayın.'
         else:
             result.state,result.reason='cover','Receiving Report barkodu ve örneklerle eşleşen mavi mühür bulundu.'
+    elif targets and result.stamp=='none' and not review_missing_stamp:
+        result.state,result.reason='attachment','Receiving Report bulundu ancak mühür bulunamadı; ayar gereği devam sayfası adayı.'
     elif targets:
         reasons={'mixed':'Mavi ve siyah/soluk mühür birlikte bulundu.',
                  'black':'Siyah mühür bulundu. Otomatik kapak olamaz.',
                  'faint':'Soluk/renksiz mühür bulundu. Otomatik kapak olamaz.',
                  'none':'Uygun mühür güvenle bulunamadı.'}
         result.state,result.reason='review',reasons[result.stamp]+' Kullanıcı kararı gerekli.'
-    elif result.other_barcodes:
+    elif result.other_barcodes and review_other_barcodes:
         result.state,result.reason='review','Başka barkodlar bulundu; Receiving Report başlığı doğrulanamadı.'
     else:
         result.state,result.reason='attachment','Receiving Report barkodu bulunmadı; devam sayfası adayı.'

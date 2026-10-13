@@ -7,6 +7,7 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 ## Özellikler
 
 - Yerel PDF’leri içe aktarma, seçili dosyayı kaldırma ve çalışma alanındaki dosyaları temizleme.
+- Ayarlardan seçilen klasör ve alt klasörlerindeki örnek PDF’leri açma.
 - Sayfa önizlemesi, %25–%400 yakınlaştırma, Ctrl + fare tekerleği ve sürükleyerek gezinme.
 - Code 39 ve Code 128 barkodlarını okuma; ürün barkodları yerine Receiving Report başlığını doğrulama.
 - Mavi, siyah, soluk/renksiz ve birden fazla mühür türü için kapak değerlendirmesi.
@@ -59,27 +60,67 @@ Hazırlama, taşıma ve Python uyumluluğu: [README_OFFLINE.md](README_OFFLINE.m
 4. Gerekirse numarayı düzeltin ve **Kapak olarak onayla** veya **Devam sayfası olarak işaretle** seçeneğini kullanın.
 5. Tüm sayfalar bir belgeye bağlandığında **Belgeleri kaydet** ile yerel bir klasör seçin.
 
+**Ayarlar → İşlem ayarları → Barkod incelemesi** bölümündeki
+**Receiving Report olmadan başka barkod bulunursa incelemeye al** seçeneği
+varsayılan olarak açıktır. Kapatıldığında bu sayfalar devam sayfası adayı olur.
+Her PDF’nin ilk sayfasında hem Receiving Report No hem de herhangi bir mühür
+bulunamazsa hata mesajı gösterilir ve sayfa incelemeye alınır; bu kontrol barkod
+inceleme ayarı kapalıyken de uygulanır.
+
+**Örnekleri aç** için **Ayarlar → Örnek dosyalar → Klasör seç** ile yerel bir
+klasör seçip ayarları kaydedin. Alt klasörler de aranır. Klasör seçilmemişse ayarlara
+yönlendiren bilgi, klasör açılamıyorsa hata, PDF yoksa klasörü kontrol etme uyarısı gösterilir.
+
+Analizi yeniden başlatmak önceki otomatik sonuçları, önizleme önbelleğini ve ilerlemeyi
+sıfırlar; sayfa listesi başa döner. Manuel kararlar korunur. **İnceleme bekliyor** sayacı
+yalnızca kullanıcı kararı gereken sayfaları sayar. Kapak kararı bekleyen devam sayfaları
+bu sayaca eklenmez; kapak kararı verilene kadar kayıt işlemi bekler.
+
 **Dosyaları temizle**, eklenmiş dosyaları ve oturumdaki kararları çalışma alanından kaldırır.
 Kaynak dosyalar diskte kalır. Dosya kaldırma ve temizleme, aktif işlem bittikten sonra kullanılabilir.
 Analizi durdurmak için **Durdur** düğmesini kullanabilirsiniz.
 
-**Ayarlar → Kapak işaretleme → Kapak olarak işaretlerken onay sor** seçeneği
+**Kaynak dosyalar** listesinde Ctrl ile ayrı dosyaları, Shift ile bir aralığı seçip
+**Seçilenleri kaldır** düğmesiyle birlikte kaldırabilirsiniz. Kaynak PDF’ler diskten silinmez.
+
+**Sayfalar** tablosundaki **Sayfa**, **Durum** ve **Barkod** başlıklarına tıklayın.
+İlk tıklama artan, ikinci tıklama azalan sıralama yapar; yön başlıkta gösterilir.
+Sayfa numaraları sayısal, durumlar alfabetik, barkodların sayı bölümleri sayısal olarak
+sıralanır. Bu işlem yalnızca liste görünümünü değiştirir; PDF sayfa sırası ve gruplama
+korunur. Analizi yeniden başlatınca liste kaynak sırasına döner.
+
+**Ayarlar → İşlem ayarları → Kapak işaretleme → Kapak olarak işaretlerken onay sor** seçeneği
 varsayılan olarak açıktır. Kapatıp **Ayarları kaydet** düğmesine bastığınızda
 manuel kapak işaretleme onay sorusu gösterilmez. Seçiminiz sonraki açılışlarda korunur;
 kapak numarası girme gerekliliği devam eder.
 
-**Ayarlar → Tamamlanma bildirimi → Tarama bittiğinde uyarı göster** seçeneği
+**Ayarlar → İşlem ayarları → Tamamlanma bildirimi → Tarama bittiğinde uyarı göster** seçeneği
 varsayılan olarak açıktır. PDF sayfalarının analizi tamamlandığında bildirim gösterir;
 durdurulan analizde gösterilmez. Seçiminiz kaydedilir.
 
 Çevrimdışı kullanım ve sorun giderme: [README_OFFLINE.md](README_OFFLINE.md).
 
-**Ayarlar → Mühür doğruluğu · eşleşme eşiği** bölümünde PDF içindeki mühürler
+**Ayarlar → Mühür doğruluğu → Mühür eşleşme eşiği** bölümünde PDF içindeki mühürler
 ve taranmış sayfalardaki mühürler için 50–99 arasında değer seçebilirsiniz.
 Varsayılanlar sırasıyla **85 ve 74**’tür. Düşük değer daha fazla adayı kabul eder;
 yüksek değer daha güçlü benzerlik arar. Bunlar doğruluk yüzdesi değildir.
 Ayarları kaydedip analizi yeniden başlatın. Renk kuralları ve taranmış sayfalarda
 kullanıcı onayı gerekliliği devam eder.
+
+**PDF içindeki mühürler**, PDF’de ayrı bir görsel olarak bulunan mühürlerdir.
+**Taranmış sayfalardaki mühürler**, sayfanın tamamı tek görüntü olduğunda sayfa içinde
+aranan mühürlerdir. İkisi de PDF olabilir; yöntem PDF’nin yapısına göre otomatik seçilir.
+Bu fark ve eşiklerin etkisi ayarlar ekranında açıklanır.
+
+**Varsayılana dön** tüm ayarları ekranda başlangıç değerlerine getirir; örnek klasörü
+seçimi temizlenir ve kayıt klasörü varsayılan `Çıktı` konumuna döner.
+**Ayarları kaydet** ile kalıcı olur. Kaydetmeden pencereyi kapatırsanız mevcut ayarlar korunur.
+
+**Ayarlar → Mühür doğruluğu → Mühür bulunamazsa kullanıcı incelemesine al** seçeneği
+varsayılan olarak açıktır. Kapatılırsa Receiving Report bulunan ama mühür bulunmayan
+sayfalar devam sayfası adayı olur. Siyah/soluk/karışık mühürler için inceleme ve ilk
+sayfada hem Receiving Report hem mühür bulunmadığında verilen hata devam eder.
+Ayar kaydedilir; değişiklikten sonra analizi yeniden başlatın.
 
 ## Çevrimdışı çalışma
 

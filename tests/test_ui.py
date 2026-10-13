@@ -5,13 +5,14 @@ import threading
 import time
 import tkinter as tk
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import patch
 from local_dependencies import activate_local_dependencies
 activate_local_dependencies()
 from pypdf import PdfWriter
 from arar.app import ArarApp
-from arar.models import PageResult, Settings
+from arar.models import PageResult, Settings, build_groups
 
 
 @unittest.skipUnless(os.environ.get('ARAR_UI_TESTS')=='1','Masaüstü testi için ARAR_UI_TESTS=1 ayarlayın.')
@@ -39,7 +40,24 @@ class DesktopTests(unittest.TestCase):
         self.gate.set()
         self.pump_until(lambda:not self.app.busy)
         self.app.close()
-        self.temp.cleanup()
+        # A preview already rendering when the window closes can briefly hold
+        # the fixture PDF open on Windows. Wait for that worker to release it.
+        deadline=time.monotonic()+5
+        while True:
+            try:
+                self.temp.cleanup()
+                break
+            except PermissionError:
+                if time.monotonic()>=deadline:
+                    raise
+                time.sleep(.02)
+
+    def descendants(self,parent):
+        result=[]
+        for child in parent.winfo_children():
+            result.append(child)
+            result.extend(self.descendants(child))
+        return result
 
     def pump_until(self,condition,timeout=10):
         deadline=time.monotonic()+timeout
@@ -54,10 +72,9 @@ class DesktopTests(unittest.TestCase):
             self.app.show_settings()
             self.root.update()
             dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
-            inputs=[child for row in dialog.winfo_children() for child in row.winfo_children()
-                    if child.winfo_class()=='TSpinbox']
+            inputs=[child for child in self.descendants(dialog) if child.winfo_class()=='TSpinbox']
             self.assertEqual([field.get() for field in inputs],['85','74'])
-            save=next(widget for widget in dialog.winfo_children() if widget.winfo_class()=='TButton')
+            save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton' and widget.cget('text')=='Ayarları kaydet')
             inputs[0].set('0')
             with patch('arar.app.messagebox.showerror') as error:
                 save.invoke()
@@ -70,6 +87,215 @@ class DesktopTests(unittest.TestCase):
             self.root.update()
             loaded=Settings.load()
             self.assertEqual((loaded.stamp_threshold,loaded.scan_stamp_threshold),(78,68))
+
+    def test_defaults_restore_every_setting_only_after_save(self):
+        previous=Settings(grouping='shared',pause_on_later_barcode=True,confirm_cover=False,
+            notify_analysis_done=False,stamp_threshold=95,scan_stamp_threshold=90,
+            review_other_barcodes=False,review_missing_stamp=False,examples_dir=self.temp.name,
+            output_dir=self.temp.name)
+        self.app.settings=previous
+        with patch('arar.models.ROOT',Path(self.temp.name)):
+            previous.save()
+            self.app.show_settings()
+            self.root.update()
+            dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+            reset=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                       and widget.cget('text')=='Varsayılana dön')
+            reset.invoke()
+            self.root.update()
+            inputs=[widget for widget in self.descendants(dialog) if widget.winfo_class()=='TSpinbox']
+            self.assertEqual([widget.get() for widget in inputs],['85','74'])
+            self.assertIs(self.app.settings,previous)
+            self.assertEqual(Settings.load().stamp_threshold,95)
+            save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                      and widget.cget('text')=='Ayarları kaydet')
+            save.invoke()
+            self.root.update()
+            self.assertEqual(asdict(self.app.settings),asdict(Settings()))
+            self.assertEqual(asdict(Settings.load()),asdict(Settings()))
+
+    def test_stamp_explanations_and_footer_fit_in_settings_window(self):
+        self.app.show_settings()
+        self.root.update()
+        dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+        tabs=next(widget for widget in dialog.winfo_children() if widget.winfo_class()=='TNotebook')
+        tabs.select(1)
+        self.root.update()
+        accuracy=dialog.nametowidget(tabs.tabs()[1])
+        text=' '.join(widget.cget('text') for widget in accuracy.winfo_children() if widget.winfo_class()=='Label')
+        self.assertIn('%85 doğru sonuç garantisi değildir',text)
+        self.assertIn('ayrı bir görsel',text)
+        self.assertIn('sayfanın tamamı tek bir',text)
+        self.assertIn('yanlış eşleşmeler artabilir',text)
+        for widget in accuracy.winfo_children():
+            self.assertLessEqual(widget.winfo_y()+widget.winfo_height(),accuracy.winfo_height())
+        for widget in self.descendants(dialog):
+            if widget.winfo_class()=='TButton' and widget.cget('text') in ('Varsayılana dön','Ayarları kaydet'):
+                self.assertLessEqual(widget.winfo_rooty()+widget.winfo_height(),dialog.winfo_rooty()+dialog.winfo_height())
+        dialog.destroy()
+
+    def test_page_headings_sort_without_changing_pdf_order_or_selection_identity(self):
+        self.app.pages=[PageResult(str(self.source),0,state='cover',barcode='B10'),
+                        PageResult(str(self.source),1,state='attachment',barcode='B2'),
+                        PageResult(str(self.source),9,state='review',barcode='B1')]
+        self.app._refresh()
+        self.root.update()
+        tree=self.app.page_tree
+        self.root.tk.call(tree.heading('page','command'))
+        self.assertEqual(tree.get_children(),('0','1','2'))
+        self.root.tk.call(tree.heading('page','command'))
+        self.assertEqual(tree.get_children(),('2','1','0'))
+        self.assertIn('▼',tree.heading('page','text'))
+        self.app.sort_pages('state')
+        self.assertEqual(tree.get_children(),('1','2','0'))
+        self.app.sort_pages('state')
+        self.assertEqual(tree.get_children(),('0','2','1'))
+        self.app.sort_pages('number')
+        self.assertEqual(tree.get_children(),('2','1','0'))
+        tree.selection_set('1')
+        self.root.update()
+        self.assertEqual(self.app.selected,1)
+        self.app.pages[0].manual_barcode='B0'
+        self.app._update_row(0,self.app.pages[0])
+        self.assertEqual(tree.get_children(),('0','2','1'))
+        self.assertEqual(tree.selection(),('1',))
+        self.assertEqual([p.index for p in self.app.pages],[0,1,9])
+        groups,_=build_groups(self.app.pages,self.app.settings.grouping)
+        self.assertEqual([p.index for p in groups[0].pages],[0,1])
+        with patch('arar.app.messagebox.askyesno',return_value=True):
+            self.app.barcode_var.set('MANUAL')
+            self.app.cover_btn.invoke()
+        self.assertEqual(self.app.pages[1].manual_barcode,'MANUAL')
+        self.assertEqual(self.app.pages[1].decision,'cover')
+        self.assertFalse(self.app.pages[0].decision)
+
+    def test_multiple_selected_sources_are_removed_without_deleting_files(self):
+        original=self.source.read_bytes()
+        second=Path(self.temp.name)/'second.pdf'
+        third=Path(self.temp.name)/'third.pdf'
+        second.write_bytes(original)
+        third.write_bytes(original)
+        self.app.sources=[str(self.source),str(second),str(third)]
+        self.app.pages=[PageResult(source,0) for source in self.app.sources]
+        self.app._refresh()
+        self.root.update()
+        self.assertEqual(self.app.source_list.cget('selectmode'),'extended')
+        self.app.source_list.selection_set(0)
+        self.app.source_list.selection_set(2)
+        self.app.remove_btn.invoke()
+        self.root.update()
+        self.assertEqual(self.app.sources,[str(second)])
+        self.assertEqual([p.source for p in self.app.pages],[str(second)])
+        for path in (self.source,second,third):
+            self.assertEqual(path.read_bytes(),original)
+        self.app.source_list.selection_set(0)
+        self.app.remove_btn.invoke()
+        self.root.update()
+        self.assertFalse(self.app.pages)
+        self.assertFalse(self.app.page_tree.get_children())
+
+    def test_new_settings_and_example_folder_are_saved(self):
+        with patch('arar.models.ROOT',Path(self.temp.name)):
+            self.app.show_settings()
+            self.root.update()
+            dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+            checkbox=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
+                          and 'başka barkod bulunursa' in widget.cget('text'))
+            checkbox.invoke()
+            missing=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
+                         and widget.cget('text')=='Mühür bulunamazsa kullanıcı incelemesine al')
+            missing.invoke()
+            choose=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                        and widget.cget('text')=='Klasör seç')
+            with patch('arar.app.filedialog.askdirectory',return_value=self.temp.name):
+                choose.invoke()
+            save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton' and widget.cget('text')=='Ayarları kaydet')
+            save.invoke()
+            self.root.update()
+            loaded=Settings.load()
+            self.assertFalse(loaded.review_other_barcodes)
+            self.assertFalse(loaded.review_missing_stamp)
+            self.assertEqual(Path(loaded.examples_dir),Path(self.temp.name).resolve())
+
+    def test_example_folder_messages_and_recursive_pdf_import(self):
+        with patch('arar.app.messagebox.showinfo') as info,patch('arar.app.messagebox.showwarning') as warning:
+            self.app.example_btn.invoke()
+            info.assert_called_once()
+            self.assertIn('Ayarlar',info.call_args.args[1])
+            empty=Path(self.temp.name)/'empty'
+            empty.mkdir()
+            self.app.settings.examples_dir=str(empty)
+            self.app.example_btn.invoke()
+            warning.assert_called_once()
+            self.assertIn('Klasörde PDF dosyası yok',warning.call_args.args[1])
+        with patch('arar.app.messagebox.showerror') as error:
+            self.app.settings.examples_dir=str(empty/'missing')
+            self.app.example_btn.invoke()
+            error.assert_called_once()
+        nested=empty/'nested'
+        nested.mkdir()
+        destination=nested/'example.PDF'
+        destination.write_bytes(self.source.read_bytes())
+        self.app.settings.examples_dir=str(empty)
+        with patch.object(self.app,'_import') as imported:
+            self.app.example_btn.invoke()
+            imported.assert_called_once_with([destination])
+
+    def test_review_counter_excludes_attachments_waiting_for_cover(self):
+        self.app.pages[0].state='review'
+        self.app.pages[1].state='attachment'
+        self.app._refresh()
+        self.root.update()
+        self.assertEqual(self.app.stats[2].cget('text'),'1')
+        self.assertEqual(self.app.page_tree.item('1','tags'),('attachment',))
+        self.assertEqual(str(self.app.export_btn.cget('state')),'disabled')
+        self.app.pages[0].decision='cover'
+        self.app.pages[0].manual_barcode='MANUAL'
+        self.app._refresh_summary()
+        self.assertEqual(self.app.stats[2].cget('text'),'0')
+        self.assertEqual(str(self.app.export_btn.cget('state')),'normal')
+
+    def test_reanalysis_resets_rows_scroll_progress_and_old_preview(self):
+        self.app.pages=[PageResult(str(self.source),i,state='attachment') for i in range(35)]
+        self.app._refresh()
+        self.root.update()
+        self.app.page_tree.selection_set('34')
+        self.app.page_tree.yview_moveto(1)
+        self.root.update()
+        old_generation=self.app.preview_generation
+        self.app.preview_cache[(str(self.source),1)]=('old',None)
+        entered=threading.Event()
+        def analyze(result,cancel,**kwargs):
+            entered.set()
+            self.gate.wait(10)
+            result.state='attachment'
+            return result
+        with patch('arar.app.analyze_page',side_effect=analyze):
+            self.app.analyze()
+            self.pump_until(entered.is_set)
+            self.assertEqual(self.app.page_tree.selection(),('0',))
+            self.assertEqual(self.app.page_tree.yview()[0],0)
+            self.assertEqual(self.app.pages[34].state,'pending')
+            self.assertEqual(self.app.page_tree.item('34','values')[1],'Bekliyor')
+            self.assertEqual(float(self.app.progress.cget('value')),0)
+            self.assertNotIn((str(self.source),1),self.app.preview_cache)
+            self.app.events.put(('preview',old_generation,(str(self.source),1),('old',None)))
+            self.pump_until(lambda:self.app.events.empty())
+            self.assertNotIn((str(self.source),1),self.app.preview_cache)
+            self.gate.set()
+            self.pump_until(lambda:not self.app.busy)
+
+    def test_first_page_error_is_displayed(self):
+        def analyze(result,cancel,**kwargs):
+            result.state='review' if result.index==0 else 'attachment'
+            result.first_page_error=result.index==0
+            result.reason='İlk sayfada Receiving Report No ve herhangi bir mühür bulunamadı.'
+            return result
+        with patch('arar.app.analyze_page',side_effect=analyze),patch('arar.app.messagebox.showerror') as error:
+            self.app.analyze()
+            self.pump_until(lambda:not self.app.busy)
+            error.assert_called_once()
+            self.assertEqual(error.call_args.args[0],'İlk sayfa kontrolü')
 
     def test_analysis_uses_snapshot_of_selected_stamp_thresholds(self):
         values=[]
@@ -87,7 +313,8 @@ class DesktopTests(unittest.TestCase):
             self.app.settings.stamp_threshold=95
             self.gate.set()
             self.pump_until(lambda:not self.app.busy)
-        self.assertEqual(values,[{'stamp_threshold':.78,'scan_stamp_threshold':.68}]*2)
+        self.assertEqual(values,[{'stamp_threshold':.78,'scan_stamp_threshold':.68,
+                                 'review_other_barcodes':True,'review_missing_stamp':True}]*2)
 
     def test_review_while_next_page_is_analyzing(self):
         entered=threading.Event()
@@ -122,6 +349,8 @@ class DesktopTests(unittest.TestCase):
     def test_late_results_keep_manual_choices_and_unsaved_draft(self):
         self.app.pages[0].state='review'
         self.app.pages[0].barcode='BEFORE'
+        self.app.pages[0].decision='cover'
+        self.app.pages[0].manual_barcode='MANUAL'
         self.app._refresh()
         self.root.update()
         entered=threading.Event()
@@ -135,8 +364,6 @@ class DesktopTests(unittest.TestCase):
         with patch('arar.app.analyze_page',side_effect=analyze),patch('arar.app.messagebox.askyesno',return_value=True):
             self.app.analyze()
             self.pump_until(entered.is_set)
-            self.app.barcode_var.set('MANUAL')
-            self.app.cover_btn.invoke()
             self.app.barcode_var.set('UNSAVED-DRAFT')
             self.gate.set()
             self.pump_until(lambda:not self.app.busy)
@@ -192,12 +419,12 @@ class DesktopTests(unittest.TestCase):
                 self.app.show_settings()
                 self.root.update()
                 dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
-                checkbox=next(widget for widget in dialog.winfo_children()
+                checkbox=next(widget for widget in self.descendants(dialog)
                               if widget.winfo_class()=='TCheckbutton' and widget.cget('text')=='Kapak olarak işaretlerken onay sor')
                 self.assertEqual(checkbox.instate(['selected']),not enabled)
                 checkbox.invoke()
-                save=next(widget for widget in dialog.winfo_children() if widget.winfo_class()=='TButton')
-                self.assertLessEqual(save.winfo_y()+save.winfo_height(),dialog.winfo_height())
+                save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton' and widget.cget('text')=='Ayarları kaydet')
+                self.assertLessEqual(save.winfo_rooty()+save.winfo_height(),dialog.winfo_rooty()+dialog.winfo_height())
                 save.invoke()
                 self.root.update()
                 self.assertFalse(dialog.winfo_exists())
@@ -227,12 +454,12 @@ class DesktopTests(unittest.TestCase):
                 self.app.show_settings()
                 self.root.update()
                 dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
-                checkbox=next(widget for widget in dialog.winfo_children()
+                checkbox=next(widget for widget in self.descendants(dialog)
                               if widget.winfo_class()=='TCheckbutton' and widget.cget('text')=='Tarama bittiğinde uyarı göster')
                 self.assertEqual(checkbox.instate(['selected']),not enabled)
                 checkbox.invoke()
-                save=next(widget for widget in dialog.winfo_children() if widget.winfo_class()=='TButton')
-                self.assertLessEqual(save.winfo_y()+save.winfo_height(),dialog.winfo_height())
+                save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton' and widget.cget('text')=='Ayarları kaydet')
+                self.assertLessEqual(save.winfo_rooty()+save.winfo_height(),dialog.winfo_rooty()+dialog.winfo_height())
                 save.invoke()
                 self.root.update()
                 self.app.settings=Settings.load()

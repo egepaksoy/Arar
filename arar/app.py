@@ -3,6 +3,7 @@ from pathlib import Path
 from collections import OrderedDict
 from dataclasses import replace
 import queue
+import re
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -43,7 +44,10 @@ class ArarApp:
         self.inspected_number=''
         self.closing=False
         self.selected=None
+        self.page_sort_column=None
+        self.page_sort_reverse=False
         self.preview_generation=0
+        self.preview_min_generation=0
         self.preview_cache=OrderedDict()
         self.preview_data=None
         self.preview_zoom=1.0
@@ -106,6 +110,8 @@ class ArarApp:
         controls.grid(row=0,column=1,rowspan=2)
         self.add_btn=ttk.Button(controls,text='+ PDF ekle',command=self.add_files)
         self.add_btn.pack(side='left',padx=4)
+        self.example_btn=ttk.Button(controls,text='Örnekleri aç',command=self.add_examples)
+        self.example_btn.pack(side='left',padx=4)
         self.analyze_btn=ttk.Button(controls,text='Analizi başlat',style='Primary.TButton',command=self.analyze)
         self.analyze_btn.pack(side='left',padx=4)
         self.stop_btn=ttk.Button(controls,text='Durdur',command=self.stop,state='disabled')
@@ -119,7 +125,7 @@ class ArarApp:
         for i,(title,subtitle,color) in enumerate([
             ('TOPLAM SAYFA','İçe aktarılan PDF sayfaları',TEXT),
             ('KAPAK SAYFASI','Belge başlangıcı olarak seçilen',TEAL),
-            ('İNCELEME BEKLİYOR','Karar veya gruplama gereken',AMBER),
+            ('İNCELEME BEKLİYOR','Kullanıcı kararı gereken sayfalar',AMBER),
             ('OLUŞACAK BELGE','Kayıt öncesi belge grupları',TEXT)]):
             stats.grid_columnconfigure(i,weight=1,uniform='stats')
             card=tk.Frame(stats,bg=WHITE,highlightbackground=LINE,highlightthickness=1)
@@ -142,12 +148,12 @@ class ArarApp:
         self.label(left,'KAYNAK DOSYALAR',size=9,bold=True,color=MUTED).grid(row=0,column=0,sticky='w',padx=14,pady=(14,8))
         self.source_list=tk.Listbox(left,height=4,font=('Segoe UI',9),bg=WHITE,fg=TEXT,
                                    selectbackground='#d9eef0',selectforeground=NAVY,
-                                   borderwidth=0,highlightthickness=0,exportselection=False)
+                                   borderwidth=0,highlightthickness=0,exportselection=False,selectmode='extended')
         self.source_list.grid(row=1,column=0,sticky='ew',padx=12)
         self.source_list.bind('<<ListboxSelect>>',self._source_selected)
         file_actions=tk.Frame(left,bg=WHITE)
         file_actions.grid(row=2,column=0,sticky='ew',padx=12,pady=(6,10))
-        self.remove_btn=ttk.Button(file_actions,text='Dosyayı kaldır',style='Compact.TButton',command=self.remove_source)
+        self.remove_btn=ttk.Button(file_actions,text='Seçilenleri kaldır',style='Compact.TButton',command=self.remove_source)
         self.remove_btn.pack(side='left')
         self.clear_btn=ttk.Button(file_actions,text='Dosyaları temizle',style='Compact.TButton',command=self.clear_files)
         self.clear_btn.pack(side='left',padx=(6,0))
@@ -158,7 +164,7 @@ class ArarApp:
         table_frame.grid_columnconfigure(0,weight=1)
         self.page_tree=ttk.Treeview(table_frame,columns=('page','state','number'),show='headings',selectmode='browse')
         for key,title,width in [('page','Sayfa',55),('state','Durum',68),('number','Barkod',103)]:
-            self.page_tree.heading(key,text=title)
+            self.page_tree.heading(key,text=title,command=lambda column=key:self.sort_pages(column))
             self.page_tree.column(key,width=width,minwidth=40,stretch=key=='number',anchor='w')
         self.page_tree.grid(row=0,column=0,sticky='nsew')
         scroll=ttk.Scrollbar(table_frame,orient='vertical',command=self.page_tree.yview)
@@ -285,7 +291,7 @@ class ArarApp:
         if not value:
             self.operation=None
         state='disabled' if value else 'normal'
-        for button in (self.add_btn,self.remove_btn,self.clear_btn,self.settings_btn):
+        for button in (self.add_btn,self.example_btn,self.remove_btn,self.clear_btn,self.settings_btn):
             button.configure(state=state)
         self.analyze_btn.configure(state='normal' if self.pages and not value else 'disabled')
         self.stop_btn.configure(state='normal' if value else 'disabled')
@@ -298,6 +304,28 @@ class ArarApp:
         paths=filedialog.askopenfilenames(title='Yerel PDF dosyalarını seçin',filetypes=[('PDF belgeleri','*.pdf')])
         if paths:
             self._import(paths)
+
+    def add_examples(self):
+        if self.busy:
+            return
+        if not self.settings.examples_dir:
+            messagebox.showinfo('Örnek klasörü seçilmedi',
+                'Ayarlar → Örnek dosyalar bölümünden örnek PDF klasörünü seçin.',parent=self.root)
+            return
+        try:
+            folder=local_path(self.settings.examples_dir,must_exist=True)
+            if not folder.is_dir():
+                raise ValueError('Seçilen konum bir klasör değil.')
+            paths=sorted(path for path in folder.rglob('*') if path.is_file() and path.suffix.lower()=='.pdf')
+        except (OSError,ValueError) as exc:
+            messagebox.showerror('Örnek klasörü açılamadı',
+                'Klasörü kontrol edin veya Ayarlar → Örnek dosyalar bölümünden yeniden seçin.\n\n'+str(exc),parent=self.root)
+            return
+        if not paths:
+            messagebox.showwarning('Örnek PDF bulunamadı',
+                'Klasörde PDF dosyası yok. Seçtiğiniz klasörü kontrol edin.',parent=self.root)
+            return
+        self._import(paths)
 
     def _import(self,paths):
         self.cancel.clear()
@@ -324,18 +352,19 @@ class ArarApp:
         indices=self.source_list.curselection()
         if self.busy or not indices:
             return
-        source=self.sources[indices[0]]
-        self.pages=[p for p in self.pages if p.source!=source]
-        self.sources.remove(source)
+        removed={self.sources[i] for i in indices}
+        self.pages=[p for p in self.pages if p.source not in removed]
+        self.sources=[source for source in self.sources if source not in removed]
         self.selected=None
         self.preview_cache.clear()
         self.preview_data=None
         self.preview_zoom=1.0
         self.preview_layout=None
         self.preview_generation+=1
+        self.preview_min_generation=self.preview_generation
         self._refresh()
         self._draw_preview()
-        self.status_var.set(Path(source).name+' çalışma alanından kaldırıldı.')
+        self.status_var.set(f'{len(removed)} kaynak dosya çalışma alanından kaldırıldı.')
 
     def clear_files(self):
         if self.busy:
@@ -362,7 +391,8 @@ class ArarApp:
     def _source_selected(self,event=None):
         selection=self.source_list.curselection()
         if selection:
-            source=self.sources[selection[0]]
+            active=self.source_list.index('active')
+            source=self.sources[active if active in selection else selection[-1]]
             index=next((i for i,p in enumerate(self.pages) if p.source==source),None)
             if index is not None:
                 self.page_tree.selection_set(str(index))
@@ -375,7 +405,8 @@ class ArarApp:
         index=int(items[0])
         if index>=len(self.pages):
             return
-        self._review_interaction()
+        if self.selected is not None and self.selected!=index:
+            self._review_interaction()
         if self.selected!=index:
             self.preview_zoom=1.0
             self.preview_layout=None
@@ -511,30 +542,72 @@ class ArarApp:
             self.source_list.insert('end',f'{Path(source).name}  ({count} sayfa)')
         self.page_tree.delete(*self.page_tree.get_children())
         for i,page in enumerate(self.pages):
-            self._update_row(i,page)
+            self._update_row(i,page,sort=False)
+        self._sort_page_rows()
         self._set_busy(self.busy)
         self._refresh_summary()
         if self.pages and self.selected is None:
             self.page_tree.selection_set('0')
 
-    def _update_row(self,i,page):
+    def sort_pages(self,column):
+        if column not in ('page','state','number'):
+            return
+        self._review_interaction()
+        self.page_sort_reverse=not self.page_sort_reverse if self.page_sort_column==column else False
+        self.page_sort_column=column
+        self._sort_page_rows()
+        self.page_tree.yview_moveto(0)
+
+    def _sort_page_rows(self):
+        column=self.page_sort_column
+        for key,title in (('page','Sayfa'),('state','Durum'),('number','Barkod')):
+            arrow=(' ▼' if self.page_sort_reverse else ' ▲') if column==key else ''
+            self.page_tree.heading(key,text=title+arrow)
+        if column is None:
+            return
+        def key(index):
+            page=self.pages[index]
+            if column=='page':
+                return page.index
+            if column=='state':
+                return STATE_LABELS[page.effective_state].casefold()
+            return tuple((1,int(part)) if part.isdigit() else (0,part.casefold())
+                         for part in re.split(r'(\d+)',page.number))
+        ordered=sorted(range(len(self.pages)),key=key,reverse=self.page_sort_reverse)
+        for position,index in enumerate(ordered):
+            self.page_tree.move(str(index),'',position)
+
+    def _update_row(self,i,page,*,sort=True):
         state=page.effective_state
         mark='✓ ' if state in ('cover','attachment') else '! ' if state=='review' else ''
         values=(mark+str(page.index+1),STATE_LABELS[state]+(' *' if page.decision else ''),page.number or '—')
+        old_values=self.page_tree.item(str(i),'values') if self.page_tree.exists(str(i)) else ()
         if self.page_tree.exists(str(i)):
             self.page_tree.item(str(i),values=values,tags=(page.effective_state,))
         else:
             self.page_tree.insert('','end',iid=str(i),values=values,tags=(page.effective_state,))
+        if sort and self.page_sort_column in ('state','number') and old_values!=values:
+            self._sort_page_rows()
 
     def _refresh_summary(self):
         groups,unassigned=build_groups(self.pages,self.settings.grouping)
-        counts=(len(self.pages),sum(p.effective_state=='cover' for p in self.pages),len(unassigned),len(groups))
+        review=sum(p.effective_state=='review' or (p.effective_state=='cover' and not p.number) for p in self.pages)
+        counts=(len(self.pages),sum(p.effective_state=='cover' for p in self.pages),review,len(groups))
         for label,number in zip(self.stats,counts):
             label.configure(text=str(number))
         self.group_tree.delete(*self.group_tree.get_children())
         for i,group in enumerate(groups):
             self.group_tree.insert('','end',iid=str(i),values=(group.number+'.pdf',len(group.pages)))
-        self.group_hint.configure(text=f'{len(unassigned)} sayfa karar / gruplama bekliyor.' if unassigned else
+        pending=sum(p.effective_state=='pending' for p in self.pages)
+        waiting=sum(p.effective_state=='attachment' for p in unassigned)
+        hints=[]
+        if review:
+            hints.append(f'{review} sayfa inceleme bekliyor.')
+        if pending:
+            hints.append(f'{pending} sayfa analiz bekliyor.')
+        if waiting:
+            hints.append(f'{waiting} devam sayfası henüz belgeye atanmadı.')
+        self.group_hint.configure(text=' '.join(hints) if hints else
                                   'Belge satırına çift tıklayarak sayfaları görün.')
         self.output_label.configure(text='Kayıt klasörü: '+self.settings.output_dir)
         self.export_btn.configure(state='normal' if groups and not unassigned and not self.busy else 'disabled')
@@ -546,8 +619,26 @@ class ArarApp:
         self.operation='analysis'
         self.review_during_analysis=False
         self.resume.clear()
+        for page in self.pages:
+            page.apply_analysis(type(page)(page.source,page.index,source_signature=page.source_signature))
+        self.selected=None
+        self.inspected_key=None
+        self.page_sort_column=None
+        self.page_sort_reverse=False
+        self.inspected_number=''
+        self.preview_generation+=1
+        self.preview_min_generation=self.preview_generation
+        self.preview_cache.clear()
+        self.preview_data=None
+        self.preview_zoom=1.0
+        self.preview_layout=None
+        self.photo=None
         self.progress.configure(maximum=len(self.pages),value=0)
         self._set_busy(True)
+        self._refresh()
+        self.page_tree.yview_moveto(0)
+        self.source_list.yview_moveto(0)
+        self._page_selected()
         self.status_var.set('Barkod ve mühürler bu bilgisayarda inceleniyor…')
         # Workers only mutate their own snapshots. User decisions live on the
         # UI thread and are preserved when queued automatic results arrive.
@@ -555,13 +646,17 @@ class ArarApp:
         pause_setting=self.settings.pause_on_later_barcode
         stamp_threshold=self.settings.stamp_threshold/100
         scan_stamp_threshold=self.settings.scan_stamp_threshold/100
+        review_other_barcodes=self.settings.review_other_barcodes
+        review_missing_stamp=self.settings.review_missing_stamp
         def work():
             for i,page in enumerate(snapshot):
                 if self.cancel.is_set():
                     break
                 try:
                     analyze_page(page,self.cancel,stamp_threshold=stamp_threshold,
-                                 scan_stamp_threshold=scan_stamp_threshold)
+                                 scan_stamp_threshold=scan_stamp_threshold,
+                                 review_other_barcodes=review_other_barcodes,
+                                 review_missing_stamp=review_missing_stamp)
                 except Exception as exc:
                     page.state,page.reason='review','Sayfa işlenemedi: '+str(exc)
                 if self.cancel.is_set():
@@ -672,43 +767,94 @@ class ArarApp:
             return
         dialog=tk.Toplevel(self.root)
         dialog.title('Arar • Ayarlar')
-        dialog.geometry('590x680')
+        dialog.geometry('640x650')
         dialog.resizable(False,False)
         dialog.configure(bg=WHITE)
         dialog.transient(self.root)
         dialog.grab_set()
-        self.label(dialog,'Belge gruplama',size=17,bold=True).pack(anchor='w',padx=24,pady=(18,8))
+        tabs=ttk.Notebook(dialog)
+        tabs.pack(fill='both',expand=True,padx=16,pady=(16,0))
+        general=tk.Frame(tabs,bg=WHITE)
+        accuracy=tk.Frame(tabs,bg=WHITE)
+        examples=tk.Frame(tabs,bg=WHITE)
+        tabs.add(general,text='İşlem ayarları')
+        tabs.add(accuracy,text='Mühür doğruluğu')
+        tabs.add(examples,text='Örnek dosyalar')
+        output_dir=tk.StringVar(value=self.settings.output_dir)
+
+        self.label(general,'Belge gruplama',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,8))
         grouping=tk.StringVar(value=self.settings.grouping)
-        ttk.Radiobutton(dialog,text='Her yeni kapakta ayrı belge başlat',variable=grouping,value='sequential').pack(anchor='w',padx=24,pady=7)
-        self.label(dialog,'Program algoritması: sayfalar bir sonraki kapağa kadar eklenir.',
-                   size=9,color=MUTED).pack(anchor='w',padx=47)
-        ttk.Radiobutton(dialog,text='Art arda kapaklara ortak devam sayfalarını ekle',variable=grouping,value='shared').pack(anchor='w',padx=24,pady=(16,7))
-        self.label(dialog,'Kurallar.pdf: peş peşe kapaklardan sonraki sayfalar her kapağa eklenir.',
-                   size=9,color=MUTED).pack(anchor='w',padx=47)
-        self.label(dialog,'Sonraki barkodlarda duraklama',size=12,bold=True).pack(anchor='w',padx=24,pady=(16,6))
+        ttk.Radiobutton(general,text='Her yeni kapakta ayrı belge başlat',variable=grouping,value='sequential').pack(anchor='w',padx=20,pady=7)
+        self.label(general,'Sayfalar bir sonraki kapağa kadar aynı belgeye eklenir.',
+                   size=9,color=MUTED).pack(anchor='w',padx=43)
+        ttk.Radiobutton(general,text='Art arda kapaklara ortak devam sayfalarını ekle',variable=grouping,value='shared').pack(anchor='w',padx=20,pady=(16,7))
+        self.label(general,'Peş peşe kapaklardan sonraki sayfalar her kapağa eklenir.',
+                   size=9,color=MUTED).pack(anchor='w',padx=43)
+        self.label(general,'Barkod incelemesi',size=12,bold=True).pack(anchor='w',padx=20,pady=(16,8))
         pause=tk.BooleanVar(value=self.settings.pause_on_later_barcode)
-        ttk.Checkbutton(dialog,text='İlk sayfadan sonra Receiving Report barkodu bulunursa sor',variable=pause).pack(anchor='w',padx=24)
-        self.label(dialog,'Belirsiz mühürler her iki ayarda da kullanıcı kararı bekler.',
-                   size=9,color=MUTED).pack(anchor='w',padx=24,pady=8)
-        self.label(dialog,'Kapak işaretleme',size=12,bold=True).pack(anchor='w',padx=24,pady=(8,6))
+        ttk.Checkbutton(general,text='İlk sayfadan sonra Receiving Report barkodu bulunursa sor',variable=pause).pack(anchor='w',padx=20,pady=3)
+        review_others=tk.BooleanVar(value=self.settings.review_other_barcodes)
+        ttk.Checkbutton(general,text='Receiving Report olmadan başka barkod bulunursa incelemeye al',variable=review_others).pack(anchor='w',padx=20,pady=3)
+        self.label(general,'Kapalıysa bu sayfalar devam sayfası adayı olur.\nİlk sayfada hem Receiving Report hem de mühür yoksa hata gösterilir.',
+                   size=9,color=MUTED,justify='left').pack(anchor='w',padx=20,pady=(6,10))
+        self.label(general,'Kapak işaretleme',size=12,bold=True).pack(anchor='w',padx=20,pady=(8,6))
         confirm_cover=tk.BooleanVar(value=self.settings.confirm_cover)
-        ttk.Checkbutton(dialog,text='Kapak olarak işaretlerken onay sor',variable=confirm_cover).pack(anchor='w',padx=24)
-        self.label(dialog,'Tamamlanma bildirimi',size=12,bold=True).pack(anchor='w',padx=24,pady=(12,6))
+        ttk.Checkbutton(general,text='Kapak olarak işaretlerken onay sor',variable=confirm_cover).pack(anchor='w',padx=20)
+        self.label(general,'Tamamlanma bildirimi',size=12,bold=True).pack(anchor='w',padx=20,pady=(12,6))
         notify_done=tk.BooleanVar(value=self.settings.notify_analysis_done)
-        ttk.Checkbutton(dialog,text='Tarama bittiğinde uyarı göster',variable=notify_done).pack(anchor='w',padx=24)
-        self.label(dialog,'Mühür doğruluğu · eşleşme eşiği',size=12,bold=True).pack(anchor='w',padx=24,pady=(16,6))
+        ttk.Checkbutton(general,text='Tarama bittiğinde uyarı göster',variable=notify_done).pack(anchor='w',padx=20)
+
+        self.label(accuracy,'Mühür eşleşme eşiği',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,12))
+        review_missing=tk.BooleanVar(value=self.settings.review_missing_stamp)
+        ttk.Checkbutton(accuracy,text='Mühür bulunamazsa kullanıcı incelemesine al',variable=review_missing).pack(anchor='w',padx=20,pady=(0,8))
+        self.label(accuracy,'Kapalıysa mühür bulunmayan Receiving Report sayfaları devam sayfası adayı olur.\n'
+                   'İlk sayfada hem Receiving Report hem mühür yoksa hata kontrolü devam eder.',
+                   size=9,color=MUTED,justify='left').pack(anchor='w',padx=20,pady=(0,12))
         stamp_value=tk.StringVar(value=str(self.settings.stamp_threshold))
         scan_value=tk.StringVar(value=str(self.settings.scan_stamp_threshold))
         for text,variable in (('PDF içindeki mühürler',stamp_value),('Taranmış sayfalardaki mühürler',scan_value)):
-            row=tk.Frame(dialog,bg=WHITE)
-            row.pack(fill='x',padx=24,pady=3)
+            row=tk.Frame(accuracy,bg=WHITE)
+            row.pack(fill='x',padx=20,pady=6)
             self.label(row,text).pack(side='left')
             self.label(row,'/ 100').pack(side='right',padx=(6,0))
             ttk.Spinbox(row,from_=50,to=99,increment=1,width=5,textvariable=variable).pack(side='right')
-        self.label(dialog,'Düşük değer: daha fazla aday. Yüksek değer: daha sıkı eşleşme.\n'
-                   'Bu değer doğruluk yüzdesi değildir. Varsayılanlar: 85 ve 74.\n'
-                   'Değişiklikten sonra analizi yeniden başlatın.',size=9,color=MUTED,
-                   justify='left').pack(anchor='w',padx=24,pady=(6,2))
+        for explanation in (
+            'Bu değerler mühür görüntüsünün örnek mühürlere ne kadar benzemesi gerektiğini belirler. '
+            '85, en az 85/100 benzerlik puanı demektir; %85 doğru sonuç garantisi değildir.',
+            'PDF içindeki mühürler (varsayılan 85): Mühür PDF içinde ayrı bir görsel olarak bulunuyorsa '
+            'bu eşik kullanılır. Program bu görseli örnek mühürlerle karşılaştırır.',
+            'Taranmış sayfalardaki mühürler (varsayılan 74): Belge taranmış ve sayfanın tamamı tek bir '
+            'görüntü olmuşsa, mühür sayfanın içinde aranır. Bu aramadaki benzerlik eşiği kullanılır. '
+            'İkisi de PDF olabilir; program PDF’nin yapısına göre yöntemi seçer.',
+            'Düşük değer daha fazla adayı kabul eder; yanlış eşleşmeler artabilir. Yüksek değer daha '
+            'sıkı eşleşme arar; bazı gerçek mühürler kaçabilir. Eşik şekil benzerliğini etkiler; '
+            'mavi, siyah ve soluk renk kontrolleri ayrıca uygulanır.',
+            'Değişiklikleri kaydettikten sonra analizi yeniden başlatın.',
+        ):
+            self.label(accuracy,explanation,size=9,color=MUTED,justify='left',wraplength=555,
+                       anchor='w').pack(anchor='w',padx=20,pady=4)
+
+        self.label(examples,'Örnek PDF klasörü',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,12))
+        examples_dir=tk.StringVar(value=self.settings.examples_dir)
+        ttk.Entry(examples,textvariable=examples_dir,state='readonly').pack(fill='x',padx=20,pady=6)
+        def choose_examples():
+            chosen=filedialog.askdirectory(title='Örnek PDF klasörünü seçin',parent=dialog)
+            if chosen:
+                try:
+                    folder=local_path(chosen,must_exist=True)
+                    if not folder.is_dir():
+                        raise ValueError('Seçilen konum bir klasör değil.')
+                    examples_dir.set(str(folder))
+                except (OSError,ValueError) as exc:
+                    messagebox.showerror('Yerel klasör gerekli',str(exc),parent=dialog)
+        folder_buttons=tk.Frame(examples,bg=WHITE)
+        folder_buttons.pack(anchor='w',padx=20,pady=6)
+        ttk.Button(folder_buttons,text='Klasör seç',command=choose_examples).pack(side='left')
+        ttk.Button(folder_buttons,text='Seçimi temizle',command=lambda:examples_dir.set('')).pack(side='left',padx=8)
+        self.label(examples,'Örnekleri aç düğmesi bu klasördeki ve alt klasörlerdeki PDF’leri açar.\n'
+                   'Bu bilgisayarda bulunan yerel bir klasör seçin.',
+                   size=9,color=MUTED,justify='left').pack(anchor='w',padx=20,pady=12)
+
         def save():
             try:
                 try:
@@ -718,20 +864,36 @@ class ArarApp:
                     raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.') from None
                 if not 50<=stamp<=99 or not 50<=scan<=99:
                     raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.')
-                self.settings.grouping=grouping.get()
-                self.settings.pause_on_later_barcode=pause.get()
-                self.settings.confirm_cover=confirm_cover.get()
-                self.settings.notify_analysis_done=notify_done.get()
-                self.settings.stamp_threshold=stamp
-                self.settings.scan_stamp_threshold=scan
-                self.settings.save()
+                updated=replace(self.settings,grouping=grouping.get(),
+                    pause_on_later_barcode=pause.get(),confirm_cover=confirm_cover.get(),
+                    notify_analysis_done=notify_done.get(),stamp_threshold=stamp,
+                    scan_stamp_threshold=scan,review_other_barcodes=review_others.get(),
+                    review_missing_stamp=review_missing.get(),
+                    examples_dir=examples_dir.get(),output_dir=output_dir.get())
+                updated.save()
             except (OSError,ValueError) as exc:
                 messagebox.showerror('Ayarlar kaydedilemedi',str(exc),parent=dialog)
                 return
+            self.settings=updated
             dialog.destroy()
             self._refresh_summary()
             self.status_var.set('Ayarlar kaydedildi.')
-        ttk.Button(dialog,text='Ayarları kaydet',style='Primary.TButton',command=save).pack(anchor='e',padx=24,pady=12)
+        def restore_defaults():
+            defaults=Settings()
+            for variable,value in (
+                (grouping,defaults.grouping),(pause,defaults.pause_on_later_barcode),
+                (review_others,defaults.review_other_barcodes),(confirm_cover,defaults.confirm_cover),
+                (notify_done,defaults.notify_analysis_done),(review_missing,defaults.review_missing_stamp),
+                (stamp_value,defaults.stamp_threshold),(scan_value,defaults.scan_stamp_threshold),
+                (examples_dir,defaults.examples_dir),(output_dir,defaults.output_dir),
+            ):
+                variable.set(value)
+        actions=tk.Frame(dialog,bg=WHITE)
+        actions.pack(fill='x',padx=20,pady=(8,12))
+        self.label(actions,'Varsayılanlar ekrana uygulanır. Kalıcı olması için ayarları kaydedin.',
+                   size=9,color=MUTED).pack(anchor='w',pady=(0,6))
+        ttk.Button(actions,text='Varsayılana dön',command=restore_defaults).pack(side='left')
+        ttk.Button(actions,text='Ayarları kaydet',style='Primary.TButton',command=save).pack(side='right')
 
     def _poll(self):
         self.poll_after=None
@@ -757,6 +919,8 @@ class ArarApp:
                     self.progress.configure(value=i+1)
                     self.status_var.set(f'{i+1} / {len(self.pages)} sayfa incelendi • {Path(page.source).name}')
                     self._refresh_summary()
+                    if page.first_page_error:
+                        messagebox.showerror('İlk sayfa kontrolü',Path(page.source).name+'\n\n'+page.reason,parent=self.root)
                     if self.selected==i:
                         self._inspector()
                         self._draw_preview()
@@ -786,7 +950,7 @@ class ArarApp:
                             f'İnceleme bekleyen sayfa: {count}',parent=self.root)
                 elif kind=='preview':
                     _,generation,key,data=event
-                    if key[0] not in self.sources:
+                    if key[0] not in self.sources or generation<self.preview_min_generation:
                         continue
                     self.preview_cache[key]=data
                     while len(self.preview_cache)>4:

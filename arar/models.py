@@ -15,6 +15,9 @@ class Settings:
     notify_analysis_done: bool = True
     stamp_threshold: int = 85
     scan_stamp_threshold: int = 74
+    review_other_barcodes: bool = True
+    review_missing_stamp: bool = True
+    examples_dir: str = ''
 
     @classmethod
     def load(cls):
@@ -26,6 +29,12 @@ class Settings:
             settings.pause_on_later_barcode = bool(settings.pause_on_later_barcode)
             settings.confirm_cover = bool(settings.confirm_cover)
             settings.notify_analysis_done = bool(settings.notify_analysis_done)
+            settings.review_other_barcodes = bool(settings.review_other_barcodes)
+            settings.review_missing_stamp = bool(settings.review_missing_stamp)
+            try:
+                settings.examples_dir = str(local_path(settings.examples_dir)) if settings.examples_dir else ''
+            except (OSError, ValueError, TypeError):
+                settings.examples_dir = ''
             for name in ('stamp_threshold', 'scan_stamp_threshold'):
                 value = getattr(settings, name)
                 if type(value) is not int or not 50 <= value <= 99:
@@ -41,6 +50,8 @@ class Settings:
             if type(value) is not int or not 50 <= value <= 99:
                 raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.')
         local_path(self.output_dir)
+        if self.examples_dir:
+            local_path(self.examples_dir)
         folder = ROOT / '.arar'
         folder.mkdir(exist_ok=True)
         target = folder / 'settings.json'
@@ -71,6 +82,7 @@ class PageResult:
     manual_barcode: str = ''
     other_barcodes: list[str] = field(default_factory=list)
     source_signature: tuple[int,int] | None = None
+    first_page_error: bool = False
 
     @property
     def number(self):
@@ -85,7 +97,7 @@ class PageResult:
         if (self.source,self.index)!=(result.source,result.index):
             raise ValueError('Analiz sonucu farklı bir sayfaya ait.')
         for name in ('barcode','target_found','stamp','state','reason','evidence',
-                     'other_barcodes','source_signature'):
+                     'other_barcodes','source_signature','first_page_error'):
             setattr(self,name,getattr(result,name))
 
 

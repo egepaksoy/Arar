@@ -11,7 +11,7 @@ from pypdf.generic import DictionaryObject,NameObject,DecodedStreamObject
 from arar.barcodes import WIDTHS, read_barcodes
 from arar.detection import analyze_page, list_pages, render_page, _scan_stamps, _stamp_match
 from arar.exporter import export_groups, safe_filename
-from arar.models import PageResult, DocumentGroup, Settings, build_groups, ROOT
+from arar.models import PageResult, DocumentGroup, Settings, Evidence, build_groups, ROOT
 from arar.offline import local_path
 
 EXAMPLES_AVAILABLE=all((ROOT/'Örnek/Kolay'/f'Örnek-{i}.pdf').is_file() for i in (1,3,4,6,9))
@@ -33,6 +33,9 @@ class SettingsTests(unittest.TestCase):
             self.assertTrue(settings.confirm_cover)
             self.assertTrue(settings.notify_analysis_done)
             self.assertEqual((settings.stamp_threshold,settings.scan_stamp_threshold),(85,74))
+            self.assertTrue(settings.review_other_barcodes)
+            self.assertTrue(settings.review_missing_stamp)
+            self.assertEqual(settings.examples_dir,'')
 
     def test_cover_confirmation_choice_survives_reload(self):
         with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
@@ -119,6 +122,47 @@ class GroupingTests(unittest.TestCase):
 
 
 class DetectionTests(unittest.TestCase):
+    def test_first_page_missing_report_and_stamp_is_an_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'blank.pdf'
+            writer=PdfWriter()
+            writer.add_blank_page(width=595,height=842)
+            writer.add_blank_page(width=595,height=842)
+            with source.open('wb') as handle:
+                writer.write(handle)
+            pages=list_pages(source)
+            first=analyze_page(pages[0],review_other_barcodes=False,review_missing_stamp=False)
+            second=analyze_page(pages[1],review_other_barcodes=False)
+            self.assertTrue(first.first_page_error)
+            self.assertEqual(first.state,'review')
+            self.assertFalse(second.first_page_error)
+            self.assertEqual(second.state,'attachment')
+            with patch('arar.detection._scan_stamps',return_value=[Evidence('blue',(0,0,20,20),.9)]):
+                stamp_only=analyze_page(list_pages(source)[0])
+            self.assertFalse(stamp_only.first_page_error)
+            self.assertEqual(stamp_only.stamp,'blue')
+
+    def test_other_barcodes_can_skip_review_but_first_page_check_remains(self):
+        symbols=[104,33,34,(104+33+2*34)%103,106]
+        row=[False]*30
+        color=True
+        for width in [int(c) for symbol in symbols for c in WIDTHS[symbol]]:
+            row.extend([color]*width*3)
+            color=not color
+        row.extend([False]*30)
+        image=Image.fromarray(np.where(np.tile(row,(60,1)),0,255).astype('uint8')).convert('RGB')
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'barcode.pdf'
+            image.save(source,'PDF',resolution=144,quality=100,save_all=True,append_images=[image])
+            first=analyze_page(list_pages(source)[0],review_other_barcodes=False)
+            review=analyze_page(list_pages(source)[1],review_other_barcodes=True)
+            skipped=analyze_page(list_pages(source)[1],review_other_barcodes=False)
+            self.assertTrue(first.first_page_error)
+            self.assertEqual(review.other_barcodes,['AB'])
+            self.assertEqual(review.state,'review')
+            self.assertEqual(skipped.state,'attachment')
+            self.assertEqual(skipped.other_barcodes,['AB'])
+
     def test_scan_threshold_controls_which_candidates_are_retained(self):
         image=Image.new('RGB',(120,120),'white')
         with patch('arar.detection._template_peak',return_value=(.80,(10,10))), \
@@ -137,6 +181,22 @@ class DetectionTests(unittest.TestCase):
             rejected=analyze_page(list_pages(source)[0],stamp_threshold=.85)
         self.assertEqual((accepted.stamp,accepted.state),('blue','cover'))
         self.assertEqual((rejected.stamp,rejected.state),('none','review'))
+
+    @requires_examples
+    def test_missing_stamp_review_can_be_disabled_without_disabling_other_stamp_rules(self):
+        source=ROOT/'Örnek/Kolay/Örnek-3.pdf'
+        with patch('arar.detection._stamp_match',return_value=None),patch('arar.detection._scan_stamps',return_value=[]):
+            enabled=analyze_page(list_pages(source)[0],review_missing_stamp=True)
+            disabled=analyze_page(list_pages(source)[0],review_missing_stamp=False)
+        self.assertTrue(disabled.target_found)
+        self.assertEqual(enabled.stamp,'none')
+        self.assertEqual(enabled.state,'review')
+        self.assertEqual(disabled.state,'attachment')
+        self.assertFalse(disabled.first_page_error)
+        for name in ('Örnek-4','Örnek-6','Örnek-9'):
+            with self.subTest(name=name):
+                result=analyze_page(list_pages(ROOT/'Örnek/Kolay'/f'{name}.pdf')[0],review_missing_stamp=False)
+                self.assertEqual(result.state,'review')
 
     @requires_examples
     def test_raster_scan_requires_manual_stamp_confirmation(self):
