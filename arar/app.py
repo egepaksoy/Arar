@@ -106,8 +106,6 @@ class ArarApp:
         controls.grid(row=0,column=1,rowspan=2)
         self.add_btn=ttk.Button(controls,text='+ PDF ekle',command=self.add_files)
         self.add_btn.pack(side='left',padx=4)
-        self.example_btn=ttk.Button(controls,text='Örnekleri aç',command=self.add_examples)
-        self.example_btn.pack(side='left',padx=4)
         self.analyze_btn=ttk.Button(controls,text='Analizi başlat',style='Primary.TButton',command=self.analyze)
         self.analyze_btn.pack(side='left',padx=4)
         self.stop_btn=ttk.Button(controls,text='Durdur',command=self.stop,state='disabled')
@@ -287,7 +285,7 @@ class ArarApp:
         if not value:
             self.operation=None
         state='disabled' if value else 'normal'
-        for button in (self.add_btn,self.example_btn,self.remove_btn,self.clear_btn,self.settings_btn):
+        for button in (self.add_btn,self.remove_btn,self.clear_btn,self.settings_btn):
             button.configure(state=state)
         self.analyze_btn.configure(state='normal' if self.pages and not value else 'disabled')
         self.stop_btn.configure(state='normal' if value else 'disabled')
@@ -300,15 +298,6 @@ class ArarApp:
         paths=filedialog.askopenfilenames(title='Yerel PDF dosyalarını seçin',filetypes=[('PDF belgeleri','*.pdf')])
         if paths:
             self._import(paths)
-
-    def add_examples(self):
-        if self.busy:
-            return
-        paths=sorted((ROOT/'Örnek').rglob('*.pdf'))
-        if paths:
-            self._import(paths)
-        else:
-            messagebox.showinfo('Örnekler','Örnek klasöründe PDF bulunamadı.')
 
     def _import(self,paths):
         self.cancel.clear()
@@ -564,12 +553,15 @@ class ArarApp:
         # UI thread and are preserved when queued automatic results arrive.
         snapshot=[replace(page,decision='',manual_barcode='') for page in self.pages]
         pause_setting=self.settings.pause_on_later_barcode
+        stamp_threshold=self.settings.stamp_threshold/100
+        scan_stamp_threshold=self.settings.scan_stamp_threshold/100
         def work():
             for i,page in enumerate(snapshot):
                 if self.cancel.is_set():
                     break
                 try:
-                    analyze_page(page,self.cancel)
+                    analyze_page(page,self.cancel,stamp_threshold=stamp_threshold,
+                                 scan_stamp_threshold=scan_stamp_threshold)
                 except Exception as exc:
                     page.state,page.reason='review','Sayfa işlenemedi: '+str(exc)
                 if self.cancel.is_set():
@@ -680,12 +672,12 @@ class ArarApp:
             return
         dialog=tk.Toplevel(self.root)
         dialog.title('Arar • Ayarlar')
-        dialog.geometry('590x590')
+        dialog.geometry('590x680')
         dialog.resizable(False,False)
         dialog.configure(bg=WHITE)
         dialog.transient(self.root)
         dialog.grab_set()
-        self.label(dialog,'Belge gruplama',size=17,bold=True).pack(anchor='w',padx=24,pady=(22,12))
+        self.label(dialog,'Belge gruplama',size=17,bold=True).pack(anchor='w',padx=24,pady=(18,8))
         grouping=tk.StringVar(value=self.settings.grouping)
         ttk.Radiobutton(dialog,text='Her yeni kapakta ayrı belge başlat',variable=grouping,value='sequential').pack(anchor='w',padx=24,pady=7)
         self.label(dialog,'Program algoritması: sayfalar bir sonraki kapağa kadar eklenir.',
@@ -693,23 +685,45 @@ class ArarApp:
         ttk.Radiobutton(dialog,text='Art arda kapaklara ortak devam sayfalarını ekle',variable=grouping,value='shared').pack(anchor='w',padx=24,pady=(16,7))
         self.label(dialog,'Kurallar.pdf: peş peşe kapaklardan sonraki sayfalar her kapağa eklenir.',
                    size=9,color=MUTED).pack(anchor='w',padx=47)
-        self.label(dialog,'Sonraki barkodlarda duraklama',size=12,bold=True).pack(anchor='w',padx=24,pady=(24,10))
+        self.label(dialog,'Sonraki barkodlarda duraklama',size=12,bold=True).pack(anchor='w',padx=24,pady=(16,6))
         pause=tk.BooleanVar(value=self.settings.pause_on_later_barcode)
         ttk.Checkbutton(dialog,text='İlk sayfadan sonra Receiving Report barkodu bulunursa sor',variable=pause).pack(anchor='w',padx=24)
         self.label(dialog,'Belirsiz mühürler her iki ayarda da kullanıcı kararı bekler.',
-                   size=9,color=MUTED).pack(anchor='w',padx=24,pady=12)
-        self.label(dialog,'Kapak işaretleme',size=12,bold=True).pack(anchor='w',padx=24,pady=(12,10))
+                   size=9,color=MUTED).pack(anchor='w',padx=24,pady=8)
+        self.label(dialog,'Kapak işaretleme',size=12,bold=True).pack(anchor='w',padx=24,pady=(8,6))
         confirm_cover=tk.BooleanVar(value=self.settings.confirm_cover)
         ttk.Checkbutton(dialog,text='Kapak olarak işaretlerken onay sor',variable=confirm_cover).pack(anchor='w',padx=24)
-        self.label(dialog,'Tamamlanma bildirimi',size=12,bold=True).pack(anchor='w',padx=24,pady=(18,10))
+        self.label(dialog,'Tamamlanma bildirimi',size=12,bold=True).pack(anchor='w',padx=24,pady=(12,6))
         notify_done=tk.BooleanVar(value=self.settings.notify_analysis_done)
         ttk.Checkbutton(dialog,text='Tarama bittiğinde uyarı göster',variable=notify_done).pack(anchor='w',padx=24)
+        self.label(dialog,'Mühür doğruluğu · eşleşme eşiği',size=12,bold=True).pack(anchor='w',padx=24,pady=(16,6))
+        stamp_value=tk.StringVar(value=str(self.settings.stamp_threshold))
+        scan_value=tk.StringVar(value=str(self.settings.scan_stamp_threshold))
+        for text,variable in (('PDF içindeki mühürler',stamp_value),('Taranmış sayfalardaki mühürler',scan_value)):
+            row=tk.Frame(dialog,bg=WHITE)
+            row.pack(fill='x',padx=24,pady=3)
+            self.label(row,text).pack(side='left')
+            self.label(row,'/ 100').pack(side='right',padx=(6,0))
+            ttk.Spinbox(row,from_=50,to=99,increment=1,width=5,textvariable=variable).pack(side='right')
+        self.label(dialog,'Düşük değer: daha fazla aday. Yüksek değer: daha sıkı eşleşme.\n'
+                   'Bu değer doğruluk yüzdesi değildir. Varsayılanlar: 85 ve 74.\n'
+                   'Değişiklikten sonra analizi yeniden başlatın.',size=9,color=MUTED,
+                   justify='left').pack(anchor='w',padx=24,pady=(6,2))
         def save():
             try:
+                try:
+                    stamp=int(stamp_value.get())
+                    scan=int(scan_value.get())
+                except ValueError:
+                    raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.') from None
+                if not 50<=stamp<=99 or not 50<=scan<=99:
+                    raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.')
                 self.settings.grouping=grouping.get()
                 self.settings.pause_on_later_barcode=pause.get()
                 self.settings.confirm_cover=confirm_cover.get()
                 self.settings.notify_analysis_done=notify_done.get()
+                self.settings.stamp_threshold=stamp
+                self.settings.scan_stamp_threshold=scan
                 self.settings.save()
             except (OSError,ValueError) as exc:
                 messagebox.showerror('Ayarlar kaydedilemedi',str(exc),parent=dialog)

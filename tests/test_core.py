@@ -9,7 +9,7 @@ from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject,NameObject,DecodedStreamObject
 from arar.barcodes import WIDTHS, read_barcodes
-from arar.detection import analyze_page, list_pages, render_page
+from arar.detection import analyze_page, list_pages, render_page, _scan_stamps, _stamp_match
 from arar.exporter import export_groups, safe_filename
 from arar.models import PageResult, DocumentGroup, Settings, build_groups, ROOT
 from arar.offline import local_path
@@ -32,6 +32,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(settings.grouping,'shared')
             self.assertTrue(settings.confirm_cover)
             self.assertTrue(settings.notify_analysis_done)
+            self.assertEqual((settings.stamp_threshold,settings.scan_stamp_threshold),(85,74))
 
     def test_cover_confirmation_choice_survives_reload(self):
         with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
@@ -43,6 +44,28 @@ class SettingsTests(unittest.TestCase):
                     settings.save()
                     self.assertEqual(Settings.load().confirm_cover,enabled)
                     self.assertEqual(Settings.load().notify_analysis_done,enabled)
+
+
+class StampThresholdSettingsTests(unittest.TestCase):
+    def test_thresholds_survive_reload_and_invalid_input_is_not_saved(self):
+        with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
+            settings=Settings(stamp_threshold=78,scan_stamp_threshold=68)
+            settings.save()
+            loaded=Settings.load()
+            self.assertEqual((loaded.stamp_threshold,loaded.scan_stamp_threshold),(78,68))
+            settings.stamp_threshold=100
+            with self.assertRaises(ValueError):
+                settings.save()
+            self.assertEqual(Settings.load().stamp_threshold,78)
+
+    def test_invalid_stored_thresholds_use_defaults_without_resetting_other_settings(self):
+        with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
+            directory=Path(folder)/'.arar'
+            directory.mkdir()
+            (directory/'settings.json').write_text('{"grouping":"shared","stamp_threshold":0,"scan_stamp_threshold":"invalid"}',encoding='utf-8')
+            loaded=Settings.load()
+            self.assertEqual(loaded.grouping,'shared')
+            self.assertEqual((loaded.stamp_threshold,loaded.scan_stamp_threshold),(85,74))
 
 
 class GroupingTests(unittest.TestCase):
@@ -96,6 +119,25 @@ class GroupingTests(unittest.TestCase):
 
 
 class DetectionTests(unittest.TestCase):
+    def test_scan_threshold_controls_which_candidates_are_retained(self):
+        image=Image.new('RGB',(120,120),'white')
+        with patch('arar.detection._template_peak',return_value=(.80,(10,10))), \
+                patch('arar.detection._classify_color',return_value='blue'):
+            self.assertTrue(_scan_stamps(image,1.25,min_score=.74))
+            self.assertFalse(_scan_stamps(image,1.25,min_score=.90))
+
+    @requires_examples
+    def test_embedded_stamp_threshold_controls_acceptance(self):
+        def fixed_score(image):
+            match=_stamp_match(image)
+            return (match[0],.80) if match and match[0]=='blue' and match[1]>=.85 else None
+        with patch('arar.detection._stamp_match',side_effect=fixed_score):
+            source=ROOT/'Örnek/Kolay/Örnek-3.pdf'
+            accepted=analyze_page(list_pages(source)[0],stamp_threshold=.75)
+            rejected=analyze_page(list_pages(source)[0],stamp_threshold=.85)
+        self.assertEqual((accepted.stamp,accepted.state),('blue','cover'))
+        self.assertEqual((rejected.stamp,rejected.state),('none','review'))
+
     @requires_examples
     def test_raster_scan_requires_manual_stamp_confirmation(self):
         image,_=render_page(ROOT/'Örnek/Kolay/Örnek-3.pdf',0,(2600,3600))

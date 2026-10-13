@@ -49,9 +49,49 @@ class DesktopTests(unittest.TestCase):
         self.root.update()
         self.assertTrue(condition(),'Arayüz işlemi zamanında tamamlanmadı.')
 
+    def test_stamp_thresholds_are_saved_and_invalid_values_are_rejected(self):
+        with patch('arar.models.ROOT',Path(self.temp.name)):
+            self.app.show_settings()
+            self.root.update()
+            dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+            inputs=[child for row in dialog.winfo_children() for child in row.winfo_children()
+                    if child.winfo_class()=='TSpinbox']
+            self.assertEqual([field.get() for field in inputs],['85','74'])
+            save=next(widget for widget in dialog.winfo_children() if widget.winfo_class()=='TButton')
+            inputs[0].set('0')
+            with patch('arar.app.messagebox.showerror') as error:
+                save.invoke()
+                error.assert_called_once()
+            self.assertTrue(dialog.winfo_exists())
+            self.assertEqual(self.app.settings.stamp_threshold,85)
+            inputs[0].set('78')
+            inputs[1].set('68')
+            save.invoke()
+            self.root.update()
+            loaded=Settings.load()
+            self.assertEqual((loaded.stamp_threshold,loaded.scan_stamp_threshold),(78,68))
+
+    def test_analysis_uses_snapshot_of_selected_stamp_thresholds(self):
+        values=[]
+        self.app.settings.stamp_threshold=78
+        self.app.settings.scan_stamp_threshold=68
+        def analyze(result,cancel,**thresholds):
+            values.append(thresholds)
+            result.state='attachment'
+            if result.index==0:
+                self.gate.wait(10)
+            return result
+        with patch('arar.app.analyze_page',side_effect=analyze):
+            self.app.analyze()
+            self.pump_until(lambda:len(values)==1)
+            self.app.settings.stamp_threshold=95
+            self.gate.set()
+            self.pump_until(lambda:not self.app.busy)
+        self.assertEqual(values,[{'stamp_threshold':.78,'scan_stamp_threshold':.68}]*2)
+
     def test_review_while_next_page_is_analyzing(self):
         entered=threading.Event()
-        def analyze(result,cancel):
+        def analyze(result,cancel,**thresholds):
             if result.index==1:
                 entered.set()
                 self.gate.wait(10)
@@ -85,7 +125,7 @@ class DesktopTests(unittest.TestCase):
         self.app._refresh()
         self.root.update()
         entered=threading.Event()
-        def analyze(result,cancel):
+        def analyze(result,cancel,**thresholds):
             if result.index==0:
                 entered.set()
                 self.gate.wait(10)
@@ -200,7 +240,7 @@ class DesktopTests(unittest.TestCase):
 
     def test_confirmation_updates_original_page_if_selection_changes(self):
         entered=threading.Event()
-        def analyze(result,cancel):
+        def analyze(result,cancel,**thresholds):
             if result.index==1:
                 entered.set()
                 self.gate.wait(10)

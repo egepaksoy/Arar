@@ -74,6 +74,13 @@ durdurulan analizde gösterilmez. Seçiminiz kaydedilir.
 
 Çevrimdışı kullanım ve sorun giderme: [README_OFFLINE.md](README_OFFLINE.md).
 
+**Ayarlar → Mühür doğruluğu · eşleşme eşiği** bölümünde PDF içindeki mühürler
+ve taranmış sayfalardaki mühürler için 50–99 arasında değer seçebilirsiniz.
+Varsayılanlar sırasıyla **85 ve 74**’tür. Düşük değer daha fazla adayı kabul eder;
+yüksek değer daha güçlü benzerlik arar. Bunlar doğruluk yüzdesi değildir.
+Ayarları kaydedip analizi yeniden başlatın. Renk kuralları ve taranmış sayfalarda
+kullanıcı onayı gerekliliği devam eder.
+
 ## Çevrimdışı çalışma
 
 Uygulamada web sunucusu, bulut hizmeti, telemetri veya güncelleme kontrolü bulunmaz.
@@ -106,8 +113,7 @@ ve ağ engelini kontrol eder. Test PDF’leri geçici klasörlerde oluşturulur.
 
 Sağlanan belge örnekleri depoya dahil değildir. Bunları kendi bilgisayarınızda
 `Örnek/Kolay` altına koyarsanız belge örneklerine bağlı entegrasyon testleri de çalışır;
-bulunmazlarsa ilgili testler açıkça atlanır. **Örnekleri aç** düğmesi yerel `Örnek`
-klasörünü kullanır.
+bulunmazlarsa ilgili testler açıkça atlanır. Örnek PDF’leri **PDF ekle** düğmesiyle seçebilirsiniz.
 
 Masaüstü arayüz testlerini de çalıştırmak için:
 

@@ -40,7 +40,7 @@ def _similarity(first,second):
 
 HEADER = Image.open(ASSETS/'receiving_report.png').convert('RGB').crop((90,0,715,49))
 STAMP_TEMPLATES = [(kind,Image.open(ASSETS/name).convert('RGB')) for kind,name in (
-    ('blue','stamp_blue_1.png'),('blue','stamp_blue_2.png'),
+    ('blue','stamp_blue_1.png'),('blue','stamp_blue_2.png'),('blue','stamp_blue_3.png'),('blue','stamp_blue_4.png'),('blue','stamp_blue_5.png'),
     ('faint','stamp_faint.png'),('black','stamp_black.png'))]
 
 
@@ -111,7 +111,7 @@ def _template_peak(array,template):
     return float(scores[y,x]),(int(x),int(y))
 
 
-def _scan_stamps(image,scale, cancel=None):
+def _scan_stamps(image,scale, cancel=None, *, min_score=.74):
     # This fallback handles raster scans. Templates come from the supplied
     # examples, so uncertain or novel shapes remain subject to user review.
     gray=_ink(image)
@@ -124,7 +124,7 @@ def _scan_stamps(image,scale, cancel=None):
             height=max(16,round(width*tight.height/tight.width))
             temp=_ink(tight.resize((width,height),Image.Resampling.BILINEAR))
             score,(x,y)=_template_peak(gray,temp)
-            if score<.74:
+            if score<min_score:
                 continue
             crop=image.crop((x,y,x+width,y+height))
             kind=_classify_color(crop)
@@ -163,7 +163,7 @@ def list_pages(source):
         return [PageResult(str(source),i,source_signature=signature) for i in range(len(doc))]
 
 
-def analyze_page(result,cancel=None):
+def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshold=.74):
     evidence=[]
     targets=[]
     others=[]
@@ -205,7 +205,7 @@ def analyze_page(result,cancel=None):
                         else:
                             others.append(b.value)
                 stamp=_stamp_match(im)
-                if stamp and stamp[1]>=.85:
+                if stamp and stamp[1]>=stamp_threshold:
                     kind=_classify_color(im)
                     evidence.append(Evidence(kind,_box_pdf(bounds,height),stamp[1],
                                              'Örnek mühür ile görsel eşleşme'))
@@ -233,7 +233,7 @@ def analyze_page(result,cancel=None):
                         break
                 if targets and fallback:
                     small=full.resize((round(full.width/4*1.25),round(full.height/4*1.25)))
-                    evidence.extend(_scan_stamps(small,1.25,cancel))
+                    evidence.extend(_scan_stamps(small,1.25,cancel,min_score=scan_stamp_threshold))
         finally:
             page.close()
     # Deduplicate observations without choosing among different target numbers.

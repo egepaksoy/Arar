@@ -13,6 +13,8 @@ class Settings:
     output_dir: str = str(ROOT / 'Çıktı')
     confirm_cover: bool = True
     notify_analysis_done: bool = True
+    stamp_threshold: int = 85
+    scan_stamp_threshold: int = 74
 
     @classmethod
     def load(cls):
@@ -24,12 +26,20 @@ class Settings:
             settings.pause_on_later_barcode = bool(settings.pause_on_later_barcode)
             settings.confirm_cover = bool(settings.confirm_cover)
             settings.notify_analysis_done = bool(settings.notify_analysis_done)
+            for name in ('stamp_threshold', 'scan_stamp_threshold'):
+                value = getattr(settings, name)
+                if type(value) is not int or not 50 <= value <= 99:
+                    setattr(settings, name, cls.__dataclass_fields__[name].default)
             settings.output_dir = str(local_path(settings.output_dir))
             return settings
         except (OSError, ValueError, TypeError):
             return cls()
 
     def save(self):
+        for name in ('stamp_threshold', 'scan_stamp_threshold'):
+            value = getattr(self, name)
+            if type(value) is not int or not 50 <= value <= 99:
+                raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.')
         local_path(self.output_dir)
         folder = ROOT / '.arar'
         folder.mkdir(exist_ok=True)
