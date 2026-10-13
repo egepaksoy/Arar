@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 @dataclass
 class Settings:
-    grouping: str = 'sequential'
+    grouping: str = 'shared'
+    rules_version: int = 2
     pause_on_later_barcode: bool = False
     output_dir: str = str(ROOT / 'Çıktı')
     confirm_cover: bool = True
@@ -17,6 +18,10 @@ class Settings:
     scan_stamp_threshold: int = 74
     review_other_barcodes: bool = True
     review_missing_stamp: bool = True
+    review_initial_mixed: bool = True
+    review_initial_plain: bool = True
+    review_later_mixed: bool = False
+    review_later_plain: bool = False
     examples_dir: str = ''
 
     @classmethod
@@ -24,13 +29,20 @@ class Settings:
         try:
             data = json.loads((ROOT / '.arar' / 'settings.json').read_text(encoding='utf-8'))
             settings = cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+            # The updated rules share following documents between adjacent
+            # blue covers. Migrate old preferences once; later choices persist.
+            if data.get('rules_version') != 2:
+                settings.grouping = 'shared'
+                settings.rules_version = 2
             if settings.grouping not in ('shared', 'sequential'):
-                settings.grouping = 'sequential'
+                settings.grouping = 'shared'
             settings.pause_on_later_barcode = bool(settings.pause_on_later_barcode)
             settings.confirm_cover = bool(settings.confirm_cover)
             settings.notify_analysis_done = bool(settings.notify_analysis_done)
             settings.review_other_barcodes = bool(settings.review_other_barcodes)
             settings.review_missing_stamp = bool(settings.review_missing_stamp)
+            for name in ('review_initial_mixed','review_initial_plain','review_later_mixed','review_later_plain'):
+                setattr(settings,name,bool(getattr(settings,name)))
             try:
                 settings.examples_dir = str(local_path(settings.examples_dir)) if settings.examples_dir else ''
             except (OSError, ValueError, TypeError):
@@ -105,6 +117,33 @@ class PageResult:
 class DocumentGroup:
     number: str
     pages: list[PageResult] = field(default_factory=list)
+
+
+@dataclass
+class DocumentContext:
+    """Stamp decisions depend on preceding pages in the same source PDF."""
+    source: str | None = None
+    after_noncover: bool = False
+
+    def apply(self,page,settings):
+        if page.source != self.source:
+            self.source=page.source
+            self.after_noncover=False
+        if not page.target_found or not page.number or page.stamp not in ('mixed','black','faint'):
+            return False
+        phase='later' if self.after_noncover else 'initial'
+        kind='mixed' if page.stamp=='mixed' else 'plain'
+        ask=getattr(settings,f'review_{phase}_{kind}')
+        description='Renkli ve renksiz mühür birlikte bulundu.' if kind=='mixed' else 'Yalnızca renksiz mühür bulundu.'
+        if ask:
+            page.state,page.reason='review',description+' Kapak olamaz; sağdaki panelden inceleyin. Analiz devam eder.'
+        else:
+            page.state,page.reason='attachment',description+' Ayar gereği soru sorulmadan devam sayfası yapıldı.'
+        return ask and not page.decision
+
+    def record(self,page):
+        if page.effective_state=='attachment':
+            self.after_noncover=True
 
 
 def build_groups(pages, grouping='shared'):

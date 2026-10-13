@@ -1,5 +1,6 @@
 """Optional desktop integration checks; enable with ARAR_UI_TESTS=1."""
 import os
+import gc
 import tempfile
 import threading
 import time
@@ -18,6 +19,8 @@ from arar.models import PageResult, Settings, build_groups
 @unittest.skipUnless(os.environ.get('ARAR_UI_TESTS')=='1','Masaüstü testi için ARAR_UI_TESTS=1 ayarlayın.')
 class DesktopTests(unittest.TestCase):
     def setUp(self):
+        # Collect closed Tk fixtures on the UI thread, before starting workers.
+        gc.collect()
         self.temp=tempfile.TemporaryDirectory()
         self.source=Path(self.temp.name)/'pages.pdf'
         writer=PdfWriter()
@@ -51,6 +54,9 @@ class DesktopTests(unittest.TestCase):
                 if time.monotonic()>=deadline:
                     raise
                 time.sleep(.02)
+        self.app=None
+        self.root=None
+        gc.collect()
 
     def descendants(self,parent):
         result=[]
@@ -89,10 +95,11 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual((loaded.stamp_threshold,loaded.scan_stamp_threshold),(78,68))
 
     def test_defaults_restore_every_setting_only_after_save(self):
-        previous=Settings(grouping='shared',pause_on_later_barcode=True,confirm_cover=False,
+        previous=Settings(grouping='sequential',pause_on_later_barcode=True,confirm_cover=False,
             notify_analysis_done=False,stamp_threshold=95,scan_stamp_threshold=90,
             review_other_barcodes=False,review_missing_stamp=False,examples_dir=self.temp.name,
-            output_dir=self.temp.name)
+            output_dir=self.temp.name,review_initial_mixed=False,review_initial_plain=False,
+            review_later_mixed=True,review_later_plain=True)
         self.app.settings=previous
         with patch('arar.models.ROOT',Path(self.temp.name)):
             previous.save()
@@ -268,7 +275,8 @@ class DesktopTests(unittest.TestCase):
         def analyze(result,cancel,**kwargs):
             entered.set()
             self.gate.wait(10)
-            result.state='attachment'
+            result.state='cover' if result.index==0 else 'attachment'
+            result.barcode='FIRST' if result.index==0 else ''
             return result
         with patch('arar.app.analyze_page',side_effect=analyze):
             self.app.analyze()
@@ -296,6 +304,87 @@ class DesktopTests(unittest.TestCase):
             self.pump_until(lambda:not self.app.busy)
             error.assert_called_once()
             self.assertEqual(error.call_args.args[0],'İlk sayfa kontrolü')
+            self.assertEqual(self.app.pages[1].state,'pending')
+
+    def test_first_page_with_barcode_or_stamp_does_not_prompt_or_stop(self):
+        for stamp,barcode in (('mixed','FIRST'),('black','FIRST'),('faint','FIRST'),
+                              ('none','FIRST'),('blue',''),('black','')):
+            with self.subTest(stamp=stamp,barcode=barcode):
+                self.app.pages=[PageResult(str(self.source),i) for i in range(2)]
+                processed=[]
+                def analyze(result,cancel,**kwargs):
+                    processed.append(result.index)
+                    result.state='review' if result.index==0 else 'attachment'
+                    result.barcode=barcode if result.index==0 else ''
+                    result.target_found=result.index==0 and bool(barcode)
+                    result.stamp=stamp if result.index==0 else 'none'
+                    return result
+                with patch('arar.app.analyze_page',side_effect=analyze), \
+                        patch('arar.app.messagebox.askyesno') as question, \
+                        patch('arar.app.messagebox.showerror') as error:
+                    self.app.analyze()
+                    self.pump_until(lambda:not self.app.busy)
+                question.assert_not_called()
+                error.assert_not_called()
+                self.assertEqual(processed,[0,1])
+                self.assertEqual(self.app.pages[0].effective_state,'review')
+                self.assertFalse(self.app.pages[0].first_page_error)
+
+    def test_nonblue_pages_follow_review_settings_without_prompting(self):
+        for stamp,field in (('mixed','review_later_mixed'),('black','review_later_plain'),('faint','review_later_plain')):
+            for ask in (False,True):
+                with self.subTest(stamp=stamp,ask=ask):
+                    self.app.pages=[PageResult(str(self.source),i) for i in range(3)]
+                    setattr(self.app.settings,field,ask)
+                    def analyze(result,cancel,**kwargs):
+                        result.barcode='FIRST' if result.index==0 else 'LATER' if result.index==2 else ''
+                        result.target_found=result.index in (0,2)
+                        result.stamp='blue' if result.index==0 else stamp if result.index==2 else 'none'
+                        result.state='cover' if result.index==0 else 'review' if result.index==2 else 'attachment'
+                        return result
+                    with patch('arar.app.analyze_page',side_effect=analyze), \
+                            patch('arar.app.messagebox.askyesno',return_value=True) as question:
+                        self.app.analyze()
+                        self.pump_until(lambda:not self.app.busy)
+                    question.assert_not_called()
+                    self.assertEqual(self.app.pages[2].effective_state,'review' if ask else 'attachment')
+
+    def test_old_later_barcode_pause_setting_does_not_prompt(self):
+        self.app.settings.pause_on_later_barcode=True
+        def analyze(result,cancel,**kwargs):
+            result.barcode='FIRST' if result.index==0 else 'SECOND'
+            result.target_found=True
+            result.stamp='blue'
+            result.state='cover'
+            return result
+        with patch('arar.app.analyze_page',side_effect=analyze), \
+                patch('arar.app.messagebox.askyesno') as question, \
+                patch('arar.app.messagebox.askokcancel') as continuation, \
+                patch('arar.app.messagebox.showerror') as error:
+            self.app.analyze()
+            self.pump_until(lambda:not self.app.busy)
+        question.assert_not_called()
+        continuation.assert_not_called()
+        error.assert_not_called()
+        self.assertEqual([page.effective_state for page in self.app.pages],['cover','cover'])
+
+    def test_stamp_question_settings_are_saved(self):
+        with patch('arar.models.ROOT',Path(self.temp.name)):
+            self.app.show_settings()
+            self.root.update()
+            dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+            fields=[widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
+                    and widget.cget('text') in ('Mavi + renksiz mühür birlikteyse incelemeye al','Yalnızca renksiz mühür varsa incelemeye al')]
+            self.assertEqual([widget.instate(['selected']) for widget in fields],[True,True,False,False])
+            for widget in fields:
+                widget.invoke()
+            save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                      and widget.cget('text')=='Ayarları kaydet')
+            save.invoke()
+            self.root.update()
+            loaded=Settings.load()
+            self.assertEqual([loaded.review_initial_mixed,loaded.review_initial_plain,
+                              loaded.review_later_mixed,loaded.review_later_plain],[False,False,True,True])
 
     def test_analysis_uses_snapshot_of_selected_stamp_thresholds(self):
         values=[]
@@ -303,7 +392,8 @@ class DesktopTests(unittest.TestCase):
         self.app.settings.scan_stamp_threshold=68
         def analyze(result,cancel,**thresholds):
             values.append(thresholds)
-            result.state='attachment'
+            result.state='cover' if result.index==0 else 'attachment'
+            result.barcode='FIRST' if result.index==0 else ''
             if result.index==0:
                 self.gate.wait(10)
             return result
@@ -466,6 +556,8 @@ class DesktopTests(unittest.TestCase):
                 self.assertEqual(self.app.settings.notify_analysis_done,enabled)
 
     def test_confirmation_updates_original_page_if_selection_changes(self):
+        self.app.pages[0].decision='cover'
+        self.app.pages[0].manual_barcode='AUTO'
         entered=threading.Event()
         def analyze(result,cancel,**thresholds):
             if result.index==1:

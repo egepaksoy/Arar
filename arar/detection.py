@@ -254,12 +254,7 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
     elif targets and not result.barcode:
         result.state,result.reason='review','Receiving Report barkodu okunamadı.'
     elif targets and result.stamp=='blue':
-        # Even exact positive matches cannot rule out a novel additional black
-        # stamp. Scanned pages therefore require an explicit confirmation.
-        if fallback:
-            result.state,result.reason='review','Taranmış sayfada mavi mühür adayı. Diğer mühürleri kontrol edip onaylayın.'
-        else:
-            result.state,result.reason='cover','Receiving Report barkodu ve örneklerle eşleşen mavi mühür bulundu.'
+        result.state,result.reason='cover','Receiving Report barkodu ve yalnızca mavi mühür bulundu.'
     elif targets and result.stamp=='none' and not review_missing_stamp:
         result.state,result.reason='attachment','Receiving Report bulundu ancak mühür bulunamadı; ayar gereği devam sayfası adayı.'
     elif targets:

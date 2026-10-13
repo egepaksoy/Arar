@@ -8,7 +8,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
-from .models import Settings, ROOT, build_groups
+from .models import Settings, DocumentContext, ROOT, build_groups
 from .detection import analyze_page, list_pages, render_page
 from .exporter import export_groups
 from .offline import local_path
@@ -642,13 +642,14 @@ class ArarApp:
         self.status_var.set('Barkod ve mühürler bu bilgisayarda inceleniyor…')
         # Workers only mutate their own snapshots. User decisions live on the
         # UI thread and are preserved when queued automatic results arrive.
-        snapshot=[replace(page,decision='',manual_barcode='') for page in self.pages]
-        pause_setting=self.settings.pause_on_later_barcode
+        snapshot=[replace(page) for page in self.pages]
+        rule_settings=replace(self.settings)
         stamp_threshold=self.settings.stamp_threshold/100
         scan_stamp_threshold=self.settings.scan_stamp_threshold/100
         review_other_barcodes=self.settings.review_other_barcodes
         review_missing_stamp=self.settings.review_missing_stamp
         def work():
+            context=DocumentContext()
             for i,page in enumerate(snapshot):
                 if self.cancel.is_set():
                     break
@@ -661,13 +662,12 @@ class ArarApp:
                     page.state,page.reason='review','Sayfa işlenemedi: '+str(exc)
                 if self.cancel.is_set():
                     break
+                context.apply(page,rule_settings)
                 self.events.put(('page',i,page))
-                if pause_setting and page.target_found and page.index>0:
-                    self.resume.clear()
-                    self.events.put(('pause',i,page))
-                    while not self.resume.wait(.1):
-                        if self.cancel.is_set():
-                            break
+                if page.first_page_error:
+                    self.cancel.set()
+                    break
+                context.record(page)
             self.events.put(('analysis_done',self.cancel.is_set()))
         threading.Thread(target=work,daemon=True).start()
 
@@ -693,6 +693,7 @@ class ArarApp:
             return
         page.manual_barcode=number
         page.decision='cover'
+        page.first_page_error=False
         self._decision_changed(index)
 
     def approve_attachment(self):
@@ -776,9 +777,11 @@ class ArarApp:
         tabs.pack(fill='both',expand=True,padx=16,pady=(16,0))
         general=tk.Frame(tabs,bg=WHITE)
         accuracy=tk.Frame(tabs,bg=WHITE)
+        decisions=tk.Frame(tabs,bg=WHITE)
         examples=tk.Frame(tabs,bg=WHITE)
         tabs.add(general,text='İşlem ayarları')
         tabs.add(accuracy,text='Mühür doğruluğu')
+        tabs.add(decisions,text='Mühür kararları')
         tabs.add(examples,text='Örnek dosyalar')
         output_dir=tk.StringVar(value=self.settings.output_dir)
 
@@ -787,15 +790,13 @@ class ArarApp:
         ttk.Radiobutton(general,text='Her yeni kapakta ayrı belge başlat',variable=grouping,value='sequential').pack(anchor='w',padx=20,pady=7)
         self.label(general,'Sayfalar bir sonraki kapağa kadar aynı belgeye eklenir.',
                    size=9,color=MUTED).pack(anchor='w',padx=43)
-        ttk.Radiobutton(general,text='Art arda kapaklara ortak devam sayfalarını ekle',variable=grouping,value='shared').pack(anchor='w',padx=20,pady=(16,7))
+        ttk.Radiobutton(general,text='Art arda kapaklara ortak devam sayfalarını ekle (kural 3)',variable=grouping,value='shared').pack(anchor='w',padx=20,pady=(16,7))
         self.label(general,'Peş peşe kapaklardan sonraki sayfalar her kapağa eklenir.',
                    size=9,color=MUTED).pack(anchor='w',padx=43)
         self.label(general,'Barkod incelemesi',size=12,bold=True).pack(anchor='w',padx=20,pady=(16,8))
-        pause=tk.BooleanVar(value=self.settings.pause_on_later_barcode)
-        ttk.Checkbutton(general,text='İlk sayfadan sonra Receiving Report barkodu bulunursa sor',variable=pause).pack(anchor='w',padx=20,pady=3)
         review_others=tk.BooleanVar(value=self.settings.review_other_barcodes)
         ttk.Checkbutton(general,text='Receiving Report olmadan başka barkod bulunursa incelemeye al',variable=review_others).pack(anchor='w',padx=20,pady=3)
-        self.label(general,'Kapalıysa bu sayfalar devam sayfası adayı olur.\nİlk sayfada hem Receiving Report hem de mühür yoksa hata gösterilir.',
+        self.label(general,'Kapalıysa bu sayfalar devam sayfası adayı olur.\nİlk sayfada hem Receiving Report barkodu hem mühür yoksa analiz durdurulur.',
                    size=9,color=MUTED,justify='left').pack(anchor='w',padx=20,pady=(6,10))
         self.label(general,'Kapak işaretleme',size=12,bold=True).pack(anchor='w',padx=20,pady=(8,6))
         confirm_cover=tk.BooleanVar(value=self.settings.confirm_cover)
@@ -808,7 +809,7 @@ class ArarApp:
         review_missing=tk.BooleanVar(value=self.settings.review_missing_stamp)
         ttk.Checkbutton(accuracy,text='Mühür bulunamazsa kullanıcı incelemesine al',variable=review_missing).pack(anchor='w',padx=20,pady=(0,8))
         self.label(accuracy,'Kapalıysa mühür bulunmayan Receiving Report sayfaları devam sayfası adayı olur.\n'
-                   'İlk sayfada hem Receiving Report hem mühür yoksa hata kontrolü devam eder.',
+                   'İlk sayfada hem Receiving Report barkodu hem mühür yoksa hata gösterilir.',
                    size=9,color=MUTED,justify='left').pack(anchor='w',padx=20,pady=(0,12))
         stamp_value=tk.StringVar(value=str(self.settings.stamp_threshold))
         scan_value=tk.StringVar(value=str(self.settings.scan_stamp_threshold))
@@ -833,6 +834,27 @@ class ArarApp:
         ):
             self.label(accuracy,explanation,size=9,color=MUTED,justify='left',wraplength=555,
                        anchor='w').pack(anchor='w',padx=20,pady=4)
+
+        self.label(decisions,'Siyah / soluk ve karışık mühürler',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,10))
+        self.label(decisions,'Yalnızca mavi mühürlü Receiving Report sayfası kapaktır. Siyah veya soluk mühür '
+                   'renksiz mühür kabul edilir. Aşağıdaki seçenekler, kapak olmayan bu sayfaların devam '
+                   'sayfası için sağdaki panelden kullanıcı incelemesi gerekip gerekmediğini belirler.',size=9,color=MUTED,
+                   justify='left',wraplength=555).pack(anchor='w',padx=20,pady=(0,12))
+        initial_mixed=tk.BooleanVar(value=self.settings.review_initial_mixed)
+        initial_plain=tk.BooleanVar(value=self.settings.review_initial_plain)
+        later_mixed=tk.BooleanVar(value=self.settings.review_later_mixed)
+        later_plain=tk.BooleanVar(value=self.settings.review_later_plain)
+        self.label(decisions,'Araya devam sayfası girmeden önce',size=12,bold=True).pack(anchor='w',padx=20,pady=(8,8))
+        ttk.Checkbutton(decisions,text='Mavi + renksiz mühür birlikteyse incelemeye al',variable=initial_mixed).pack(anchor='w',padx=20,pady=3)
+        ttk.Checkbutton(decisions,text='Yalnızca renksiz mühür varsa incelemeye al',variable=initial_plain).pack(anchor='w',padx=20,pady=3)
+        self.label(decisions,'Araya devam sayfası girdikten sonra',size=12,bold=True).pack(anchor='w',padx=20,pady=(18,8))
+        ttk.Checkbutton(decisions,text='Mavi + renksiz mühür birlikteyse incelemeye al',variable=later_mixed).pack(anchor='w',padx=20,pady=3)
+        ttk.Checkbutton(decisions,text='Yalnızca renksiz mühür varsa incelemeye al',variable=later_plain).pack(anchor='w',padx=20,pady=3)
+        self.label(decisions,'Kapalı seçeneklerde sayfa doğrudan devam sayfası olur. Konum her PDF için ayrı '
+                   'değerlendirilir. Açık seçeneklerde inceleme sağdaki panelden yapılır; analiz devam eder '
+                   've onay penceresi açılmaz. Yalnızca ilk sayfada hem Receiving Report barkodu hem mühür '
+                   'bulunamazsa hata gösterilir ve analiz durur.',
+                   size=9,color=MUTED,justify='left',wraplength=555).pack(anchor='w',padx=20,pady=16)
 
         self.label(examples,'Örnek PDF klasörü',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,12))
         examples_dir=tk.StringVar(value=self.settings.examples_dir)
@@ -865,10 +887,12 @@ class ArarApp:
                 if not 50<=stamp<=99 or not 50<=scan<=99:
                     raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.')
                 updated=replace(self.settings,grouping=grouping.get(),
-                    pause_on_later_barcode=pause.get(),confirm_cover=confirm_cover.get(),
+                    pause_on_later_barcode=False,confirm_cover=confirm_cover.get(),
                     notify_analysis_done=notify_done.get(),stamp_threshold=stamp,
                     scan_stamp_threshold=scan,review_other_barcodes=review_others.get(),
                     review_missing_stamp=review_missing.get(),
+                    review_initial_mixed=initial_mixed.get(),review_initial_plain=initial_plain.get(),
+                    review_later_mixed=later_mixed.get(),review_later_plain=later_plain.get(),
                     examples_dir=examples_dir.get(),output_dir=output_dir.get())
                 updated.save()
             except (OSError,ValueError) as exc:
@@ -881,9 +905,11 @@ class ArarApp:
         def restore_defaults():
             defaults=Settings()
             for variable,value in (
-                (grouping,defaults.grouping),(pause,defaults.pause_on_later_barcode),
+                (grouping,defaults.grouping),
                 (review_others,defaults.review_other_barcodes),(confirm_cover,defaults.confirm_cover),
                 (notify_done,defaults.notify_analysis_done),(review_missing,defaults.review_missing_stamp),
+                (initial_mixed,defaults.review_initial_mixed),(initial_plain,defaults.review_initial_plain),
+                (later_mixed,defaults.review_later_mixed),(later_plain,defaults.review_later_plain),
                 (stamp_value,defaults.stamp_threshold),(scan_value,defaults.scan_stamp_threshold),
                 (examples_dir,defaults.examples_dir),(output_dir,defaults.output_dir),
             ):
@@ -919,21 +945,14 @@ class ArarApp:
                     self.progress.configure(value=i+1)
                     self.status_var.set(f'{i+1} / {len(self.pages)} sayfa incelendi • {Path(page.source).name}')
                     self._refresh_summary()
-                    if page.first_page_error:
-                        messagebox.showerror('İlk sayfa kontrolü',Path(page.source).name+'\n\n'+page.reason,parent=self.root)
                     if self.selected==i:
                         self._inspector()
                         self._draw_preview()
-                elif kind=='pause':
-                    _,i,page=event
-                    if not self.cancel.is_set():
+                    if page.first_page_error:
                         self.page_tree.selection_set(str(i))
                         self.page_tree.see(str(i))
-                        if not messagebox.askokcancel('Yeni barkod bulundu',
-                                f'{Path(page.source).name} • Sayfa {page.index+1}\n'
-                                f'Receiving Report No: {page.barcode}\n\nAnalize devam edilsin mi?'):
-                            self.cancel.set()
-                    self.resume.set()
+                        self._page_selected()
+                        messagebox.showerror('İlk sayfa kontrolü',Path(page.source).name+'\n\n'+page.reason,parent=self.root)
                 elif kind=='analysis_done':
                     self._set_busy(False)
                     self._refresh_summary()

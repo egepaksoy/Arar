@@ -14,7 +14,7 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - **Analiz sürerken tamamlanan sayfaları inceleme ve kullanıcı kararı verme.** Arka plandaki sonuçlar manuel kararları değiştirmez.
 - İşlenen sayfalarda yeşil tik, kullanıcı incelemesi gerekenlerde kırmızı işaret.
 - Sırayla gruplama veya art arda kapaklara ortak devam sayfalarını ekleme.
-- Sonraki Receiving Report barkodlarında isteğe bağlı duraklama.
+- Sonraki kapak sayfalarında isteğe bağlı duraklama.
 - Kapak işaretleme onay sorusunu ayarlardan açma veya kapatma.
 - PDF analizi tamamlandığında ayarlardan açılıp kapatılabilen “Tarama bitti” bildirimi.
 - Barkod adıyla PDF kaydı, çakışan isimlere numara ekleme ve JSON işlem raporu.
@@ -63,9 +63,28 @@ Hazırlama, taşıma ve Python uyumluluğu: [README_OFFLINE.md](README_OFFLINE.m
 **Ayarlar → İşlem ayarları → Barkod incelemesi** bölümündeki
 **Receiving Report olmadan başka barkod bulunursa incelemeye al** seçeneği
 varsayılan olarak açıktır. Kapatıldığında bu sayfalar devam sayfası adayı olur.
-Her PDF’nin ilk sayfasında hem Receiving Report No hem de herhangi bir mühür
-bulunamazsa hata mesajı gösterilir ve sayfa incelemeye alınır; bu kontrol barkod
-inceleme ayarı kapalıyken de uygulanır.
+Analiz sırasında “Devam edilsin mi?” veya otomatik kapak onayı penceresi açılmaz.
+Yalnızca PDF’nin ilk sayfasında hem Receiving Report barkodu hem de herhangi bir
+mühür bulunamazsa hata gösterilir ve analiz durdurulur; sonraki sayfalar işlenmez.
+Diğer incelemeler sağdaki panelden yapılır; analiz bu kararları beklemeden devam eder.
+Önceden verilen manuel kapak onayı korunur.
+
+**Ayarlar → Mühür kararları** bölümünde karışık (mavi + siyah/soluk) ve yalnızca
+renksiz (siyah/soluk) mühürler için iki aşamada ayrı inceleme seçenekleri bulunur:
+
+- Araya devam sayfası girmeden önce: iki inceleme seçeneği de varsayılan olarak açıktır.
+- Araya devam sayfası girdikten sonra: iki inceleme seçeneği de varsayılan olarak kapalıdır;
+  ilgili Receiving Report sayfası otomatik devam sayfası olur.
+
+Seçenekler açıkken sayfa sağdaki panelde inceleme bekler; onay penceresi açılmaz
+ve sonraki sayfalar işlenmeye devam eder. Konum her kaynak PDF için ayrı değerlendirilir.
+İlk sayfada hem barkod hem mühür bulunamaması kontrolü bu seçeneklerden bağımsızdır.
+
+Yalnızca mavi mühür tespit edilen Receiving Report sayfaları kapaktır. 3. maddeye
+uygun **ortak devam sayfaları** gruplaması varsayılandır: art arda gelen kapakların
+ardındaki belgeler her kapağın PDF’sine eklenir. Eski ayarlardaki sıralı gruplama,
+bu kurallara geçişte bir kez ortak gruplamaya alınır; sonrasında ayarlardan açıkça
+yapılan gruplama seçimi korunur.
 
 **Örnekleri aç** için **Ayarlar → Örnek dosyalar → Klasör seç** ile yerel bir
 klasör seçip ayarları kaydedin. Alt klasörler de aranır. Klasör seçilmemişse ayarlara
@@ -104,8 +123,8 @@ durdurulan analizde gösterilmez. Seçiminiz kaydedilir.
 ve taranmış sayfalardaki mühürler için 50–99 arasında değer seçebilirsiniz.
 Varsayılanlar sırasıyla **85 ve 74**’tür. Düşük değer daha fazla adayı kabul eder;
 yüksek değer daha güçlü benzerlik arar. Bunlar doğruluk yüzdesi değildir.
-Ayarları kaydedip analizi yeniden başlatın. Renk kuralları ve taranmış sayfalarda
-kullanıcı onayı gerekliliği devam eder.
+Ayarları kaydedip analizi yeniden başlatın. Mühür renginin ve sayfanın dosya içindeki
+konumunun değerlendirilmesi ayrıca devam eder.
 
 **PDF içindeki mühürler**, PDF’de ayrı bir görsel olarak bulunan mühürlerdir.
 **Taranmış sayfalardaki mühürler**, sayfanın tamamı tek görüntü olduğunda sayfa içinde
@@ -118,8 +137,9 @@ seçimi temizlenir ve kayıt klasörü varsayılan `Çıktı` konumuna döner.
 
 **Ayarlar → Mühür doğruluğu → Mühür bulunamazsa kullanıcı incelemesine al** seçeneği
 varsayılan olarak açıktır. Kapatılırsa Receiving Report bulunan ama mühür bulunmayan
-sayfalar devam sayfası adayı olur. Siyah/soluk/karışık mühürler için inceleme ve ilk
-sayfada hem Receiving Report hem mühür bulunmadığında verilen hata devam eder.
+sayfalar devam sayfası adayı olur. Siyah/soluk/karışık mühürler **Mühür kararları**
+sekmesindeki konum kurallarıyla değerlendirilir. İlk sayfada hem barkod hem mühür
+bulunamaması kontrolü devam eder.
 Ayar kaydedilir; değişiklikten sonra analizi yeniden başlatın.
 
 ## Çevrimdışı çalışma
@@ -135,8 +155,9 @@ kayıt engellenir. Kayıt sırasında mevcut PDF’lerin üzerine yazılmaz.
 ## Tanımanın kapsamı
 
 Başlık ve mühür tespiti `assets` klasöründeki yerel görsel şablonları kullanır.
-Tam sayfa taramalarda barkod okuma ve 90 derece yön düzeltme desteklenir;
-mühür sonucu kullanıcı onayı gerektirir. Farklı mühür tasarımları, yazı tipleri,
+Tam sayfa taramalarda barkod okuma ve 90 derece yön düzeltme desteklenir.
+Yalnızca mavi mühür bulunursa kapak, diğer mühürlerde konuma ve ayarlara göre karar
+verilir. Farklı mühür tasarımları, yazı tipleri,
 eğik veya düşük kaliteli taramalar manuel inceleme gerektirebilir.
 
 Doğrudan tarayıcı cihazı bağlantısı, klasör izleme, OCR, parola korumalı PDF açma

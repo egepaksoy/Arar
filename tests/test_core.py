@@ -11,7 +11,7 @@ from pypdf.generic import DictionaryObject,NameObject,DecodedStreamObject
 from arar.barcodes import WIDTHS, read_barcodes
 from arar.detection import analyze_page, list_pages, render_page, _scan_stamps, _stamp_match
 from arar.exporter import export_groups, safe_filename
-from arar.models import PageResult, DocumentGroup, Settings, Evidence, build_groups, ROOT
+from arar.models import PageResult, DocumentGroup, DocumentContext, Settings, Evidence, build_groups, ROOT
 from arar.offline import local_path
 
 EXAMPLES_AVAILABLE=all((ROOT/'Örnek/Kolay'/f'Örnek-{i}.pdf').is_file() for i in (1,3,4,6,9))
@@ -121,6 +121,53 @@ class GroupingTests(unittest.TestCase):
         self.assertEqual(len(left),2)
 
 
+class ContextRuleTests(unittest.TestCase):
+    def test_nonblue_stamp_decisions_follow_position_and_each_setting(self):
+        for stamp in ('mixed','black','faint'):
+            with self.subTest(stamp=stamp):
+                settings=Settings()
+                context=DocumentContext()
+                initial=PageResult('one.pdf',1,barcode='A',target_found=True,stamp=stamp,state='review')
+                self.assertTrue(context.apply(initial,settings))
+                self.assertEqual(initial.state,'review')
+                context.record(PageResult('one.pdf',2,state='attachment'))
+                late=PageResult('one.pdf',3,barcode='B',target_found=True,stamp=stamp,state='review')
+                self.assertFalse(context.apply(late,settings))
+                self.assertEqual(late.state,'attachment')
+                kind='mixed' if stamp=='mixed' else 'plain'
+                setattr(settings,'review_later_'+kind,True)
+                self.assertTrue(context.apply(late,settings))
+                self.assertEqual(late.state,'review')
+                setattr(settings,'review_initial_'+kind,False)
+                other=PageResult('other.pdf',1,barcode='C',target_found=True,stamp=stamp,state='review')
+                self.assertFalse(context.apply(other,settings))
+                self.assertEqual(other.state,'attachment')
+                self.assertFalse(context.after_noncover)
+
+    def test_old_grouping_migrates_once_and_explicit_new_choice_persists(self):
+        with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
+            directory=Path(folder)/'.arar'
+            directory.mkdir()
+            (directory/'settings.json').write_text('{"grouping":"sequential"}',encoding='utf-8')
+            loaded=Settings.load()
+            self.assertEqual(loaded.grouping,'shared')
+            loaded.grouping='sequential'
+            loaded.save()
+            self.assertEqual(Settings.load().grouping,'sequential')
+
+    @unittest.skipUnless((ROOT/'Örnek/Orta/Örnek-9.pdf').is_file(),'Yerel Orta Örnek-9 bulunamadı.')
+    def test_orta_example_9_page_5_becomes_attachment_after_documents(self):
+        context=DocumentContext()
+        settings=Settings()
+        pages=list_pages(ROOT/'Örnek/Orta/Örnek-9.pdf')
+        for result in pages[:5]:
+            analyze_page(result)
+            context.apply(result,settings)
+            context.record(result)
+        self.assertEqual((pages[4].stamp,pages[4].state),('mixed','attachment'))
+        self.assertTrue(pages[4].target_found)
+
+
 class DetectionTests(unittest.TestCase):
     def test_first_page_missing_report_and_stamp_is_an_error(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -199,14 +246,14 @@ class DetectionTests(unittest.TestCase):
                 self.assertEqual(result.state,'review')
 
     @requires_examples
-    def test_raster_scan_requires_manual_stamp_confirmation(self):
+    def test_raster_scan_with_only_blue_stamp_is_a_cover(self):
         image,_=render_page(ROOT/'Örnek/Kolay/Örnek-3.pdf',0,(2600,3600))
         with tempfile.TemporaryDirectory() as folder:
             source=Path(folder)/'scan.pdf'
             image.save(source,'PDF',resolution=288)
             result=analyze_page(list_pages(source)[0])
             self.assertEqual(result.barcode,'THAEK12026124')
-            self.assertEqual(result.state,'review')
+            self.assertEqual(result.state,'cover')
             self.assertEqual(result.stamp,'blue')
 
     @requires_examples
