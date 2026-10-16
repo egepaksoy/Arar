@@ -18,9 +18,23 @@ from arar.models import PageResult, Settings, build_groups
 
 @unittest.skipUnless(os.environ.get('ARAR_UI_TESTS')=='1','Masaüstü testi için ARAR_UI_TESTS=1 ayarlayın.')
 class DesktopTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Tk objects must be collected on this thread, including closed dialogs.
+        # Automatic cyclic GC can otherwise run inside a PDF preview worker.
+        cls.gc_was_enabled=gc.isenabled()
+        gc.disable()
+
+    @classmethod
+    def tearDownClass(cls):
+        gc.collect()
+        if cls.gc_was_enabled:
+            gc.enable()
+
     def setUp(self):
         # Collect closed Tk fixtures on the UI thread, before starting workers.
         gc.collect()
+        self.existing_threads=set(threading.enumerate())
         self.temp=tempfile.TemporaryDirectory()
         self.source=Path(self.temp.name)/'pages.pdf'
         writer=PdfWriter()
@@ -43,6 +57,9 @@ class DesktopTests(unittest.TestCase):
         self.gate.set()
         self.pump_until(lambda:not self.app.busy)
         self.app.close()
+        for worker in set(threading.enumerate())-self.existing_threads:
+            worker.join(timeout=10)
+            self.assertFalse(worker.is_alive(),'Testin PDF işçisi zamanında kapanmadı.')
         # A preview already rendering when the window closes can briefly hold
         # the fixture PDF open on Windows. Wait for that worker to release it.
         deadline=time.monotonic()+5
@@ -100,6 +117,7 @@ class DesktopTests(unittest.TestCase):
             review_other_barcodes=False,review_missing_stamp=False,examples_dir=self.temp.name,
             output_dir=self.temp.name,review_initial_mixed=False,review_initial_plain=False,
             review_later_mixed=True,review_later_plain=True)
+        previous.faint_blue_as_blue=True
         self.app.settings=previous
         with patch('arar.models.ROOT',Path(self.temp.name)):
             previous.save()
@@ -136,6 +154,11 @@ class DesktopTests(unittest.TestCase):
         self.assertIn('yanlış eşleşmeler artabilir',text)
         for widget in accuracy.winfo_children():
             self.assertLessEqual(widget.winfo_y()+widget.winfo_height(),accuracy.winfo_height())
+        tabs.select(2)
+        self.root.update()
+        decisions=dialog.nametowidget(tabs.tabs()[2])
+        for widget in decisions.winfo_children():
+            self.assertLessEqual(widget.winfo_y()+widget.winfo_height(),decisions.winfo_height())
         for widget in self.descendants(dialog):
             if widget.winfo_class()=='TButton' and widget.cget('text') in ('Varsayılana dön','Ayarları kaydet'):
                 self.assertLessEqual(widget.winfo_rooty()+widget.winfo_height(),dialog.winfo_rooty()+dialog.winfo_height())
@@ -386,10 +409,27 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual([loaded.review_initial_mixed,loaded.review_initial_plain,
                               loaded.review_later_mixed,loaded.review_later_plain],[False,False,True,True])
 
+    def test_faint_blue_setting_is_saved_and_restored_in_dialog(self):
+        with patch('arar.models.ROOT',Path(self.temp.name)):
+            for expected in (False,True):
+                self.app.show_settings()
+                self.root.update()
+                dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+                option=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
+                            and widget.cget('text')=='Soluk mavi mühürleri mavi olarak işle')
+                self.assertEqual(option.instate(['selected']),expected)
+                option.invoke()
+                save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                          and widget.cget('text')=='Ayarları kaydet')
+                save.invoke()
+                self.root.update()
+                self.assertEqual(Settings.load().faint_blue_as_blue,not expected)
+
     def test_analysis_uses_snapshot_of_selected_stamp_thresholds(self):
         values=[]
         self.app.settings.stamp_threshold=78
         self.app.settings.scan_stamp_threshold=68
+        self.app.settings.faint_blue_as_blue=True
         def analyze(result,cancel,**thresholds):
             values.append(thresholds)
             result.state='cover' if result.index==0 else 'attachment'
@@ -401,10 +441,12 @@ class DesktopTests(unittest.TestCase):
             self.app.analyze()
             self.pump_until(lambda:len(values)==1)
             self.app.settings.stamp_threshold=95
+            self.app.settings.faint_blue_as_blue=False
             self.gate.set()
             self.pump_until(lambda:not self.app.busy)
         self.assertEqual(values,[{'stamp_threshold':.78,'scan_stamp_threshold':.68,
-                                 'review_other_barcodes':True,'review_missing_stamp':True}]*2)
+                                 'review_other_barcodes':True,'review_missing_stamp':True,
+                                 'faint_blue_as_blue':True}]*2)
 
     def test_review_while_next_page_is_analyzing(self):
         entered=threading.Event()

@@ -80,6 +80,14 @@ Seçenekler açıkken sayfa sağdaki panelde inceleme bekler; onay penceresi aç
 ve sonraki sayfalar işlenmeye devam eder. Konum her kaynak PDF için ayrı değerlendirilir.
 İlk sayfada hem barkod hem mühür bulunamaması kontrolü bu seçeneklerden bağımsızdır.
 
+**Ayarlar → Mühür kararları → Soluk mavi mühürleri mavi olarak işle** seçeneği
+varsayılan olarak kapalıdır. Açıldığında mavi renk içeren soluk mühürler de mavi
+olarak değerlendirilir; siyah ve gri mühürler maviye çevrilmez. Hem PDF içinde ayrı
+görsel olan mühürlerde hem de taranmış sayfalarda geçerlidir. Mühür şeklinin mevcut
+eşleşme eşiğini geçmesi gerekir. Receiving Report barkodu ile yalnızca bu mühürler
+varsa sayfa kapak olabilir; ayrıca siyah mühür varsa karışık mühür kuralları uygulanır.
+Seçim kaydedilir. Değişiklikten sonra analizi yeniden başlatın.
+
 Yalnızca mavi mühür tespit edilen Receiving Report sayfaları kapaktır. 3. maddeye
 uygun **ortak devam sayfaları** gruplaması varsayılandır: art arda gelen kapakların
 ardındaki belgeler her kapağın PDF’sine eklenir. Eski ayarlardaki sıralı gruplama,

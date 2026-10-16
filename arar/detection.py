@@ -59,17 +59,22 @@ def _stamp_match(image):
                key=lambda item:item[1])
 
 
-def _classify_color(image):
+def _classify_color(image, *, faint_blue_as_blue=False):
     rgb=np.asarray(image.convert('RGB'),dtype=float)
     dark=rgb.min(axis=2)<240
     blue=(rgb[:,:,2]-rgb[:,:,0]>18)&(rgb[:,:,2]-rgb[:,:,1]>4)&dark
-    if dark.sum()<20:
-        return 'none'
-    if blue.sum()/dark.sum()>.3:
-        # Faint purple ink must not be treated as an eligible blue stamp.
+    if dark.sum()>=20 and blue.sum()/dark.sum()>.3:
+        # Preserve the usual saturation requirement unless explicitly enabled.
         saturation=(rgb.max(axis=2)-rgb.min(axis=2))[blue]
-        return 'blue' if float(np.percentile(saturation,75))>75 else 'faint'
-    return 'black'
+        return 'blue' if faint_blue_as_blue or float(np.percentile(saturation,75))>75 else 'faint'
+    if faint_blue_as_blue:
+        # Washed-out blue can fall below the normal color/brightness limits.
+        # Require a blue bias across the ink, rather than a few tinted pixels.
+        pale_ink=rgb.min(axis=2)<248
+        pale_blue=(rgb[:,:,2]-rgb[:,:,0]>8)&(rgb[:,:,2]-rgb[:,:,1]>2)&pale_ink
+        if pale_blue.sum()>=20 and pale_blue.sum()/pale_ink.sum()>.3:
+            return 'blue'
+    return 'black' if dark.sum()>=20 else 'none'
 
 
 def _box_pdf(bounds,height):
@@ -111,7 +116,7 @@ def _template_peak(array,template):
     return float(scores[y,x]),(int(x),int(y))
 
 
-def _scan_stamps(image,scale, cancel=None, *, min_score=.74):
+def _scan_stamps(image,scale, cancel=None, *, min_score=.74, faint_blue_as_blue=False):
     # This fallback handles raster scans. Templates come from the supplied
     # examples, so uncertain or novel shapes remain subject to user review.
     gray=_ink(image)
@@ -127,7 +132,7 @@ def _scan_stamps(image,scale, cancel=None, *, min_score=.74):
             if score<min_score:
                 continue
             crop=image.crop((x,y,x+width,y+height))
-            kind=_classify_color(crop)
+            kind=_classify_color(crop,faint_blue_as_blue=faint_blue_as_blue)
             if kind=='none':
                 continue
             box=(x/scale,y/scale,(x+width)/scale,(y+height)/scale)
@@ -164,7 +169,7 @@ def list_pages(source):
 
 
 def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshold=.74,
-                 review_other_barcodes=True, review_missing_stamp=True):
+                 review_other_barcodes=True, review_missing_stamp=True, faint_blue_as_blue=False):
     evidence=[]
     targets=[]
     others=[]
@@ -207,7 +212,7 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
                             others.append(b.value)
                 stamp=_stamp_match(im)
                 if stamp and stamp[1]>=stamp_threshold:
-                    kind=_classify_color(im)
+                    kind=_classify_color(im,faint_blue_as_blue=faint_blue_as_blue)
                     evidence.append(Evidence(kind,_box_pdf(bounds,height),stamp[1],
                                              'Örnek mühür ile görsel eşleşme'))
             if not targets or fallback:
@@ -234,7 +239,8 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
                         break
                 if (targets and fallback) or (result.index==0 and not targets and not evidence):
                     small=full.resize((round(full.width/4*1.25),round(full.height/4*1.25)))
-                    evidence.extend(_scan_stamps(small,1.25,cancel,min_score=scan_stamp_threshold))
+                    evidence.extend(_scan_stamps(small,1.25,cancel,min_score=scan_stamp_threshold,
+                                                 faint_blue_as_blue=faint_blue_as_blue))
         finally:
             page.close()
     # Deduplicate observations without choosing among different target numbers.

@@ -648,6 +648,7 @@ class ArarApp:
         scan_stamp_threshold=self.settings.scan_stamp_threshold/100
         review_other_barcodes=self.settings.review_other_barcodes
         review_missing_stamp=self.settings.review_missing_stamp
+        faint_blue_as_blue=self.settings.faint_blue_as_blue
         def work():
             context=DocumentContext()
             for i,page in enumerate(snapshot):
@@ -657,7 +658,8 @@ class ArarApp:
                     analyze_page(page,self.cancel,stamp_threshold=stamp_threshold,
                                  scan_stamp_threshold=scan_stamp_threshold,
                                  review_other_barcodes=review_other_barcodes,
-                                 review_missing_stamp=review_missing_stamp)
+                                 review_missing_stamp=review_missing_stamp,
+                                 faint_blue_as_blue=faint_blue_as_blue)
                 except Exception as exc:
                     page.state,page.reason='review','Sayfa işlenemedi: '+str(exc)
                 if self.cancel.is_set():
@@ -836,8 +838,13 @@ class ArarApp:
                        anchor='w').pack(anchor='w',padx=20,pady=4)
 
         self.label(decisions,'Siyah / soluk ve karışık mühürler',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,10))
-        self.label(decisions,'Yalnızca mavi mühürlü Receiving Report sayfası kapaktır. Siyah veya soluk mühür '
-                   'renksiz mühür kabul edilir. Aşağıdaki seçenekler, kapak olmayan bu sayfaların devam '
+        faint_blue=tk.BooleanVar(value=self.settings.faint_blue_as_blue)
+        ttk.Checkbutton(decisions,text='Soluk mavi mühürleri mavi olarak işle',variable=faint_blue).pack(anchor='w',padx=20,pady=3)
+        self.label(decisions,'Açıkken mavi renk içeren soluk mühürler de mavi sayılır. Siyah ve gri mühürler '
+                   'mavi sayılmaz. PDF içindeki ve taranmış mühürlerde geçerlidir. Kaydettikten sonra analizi yeniden başlatın.',
+                   size=9,color=MUTED,justify='left',wraplength=555).pack(anchor='w',padx=20,pady=(4,10))
+        self.label(decisions,'Yalnızca mavi mühürlü Receiving Report sayfası kapaktır. Bu seçenek kapalıyken soluk mühür '
+                   'renksiz kabul edilir. Aşağıdaki seçenekler, kapak olmayan bu sayfaların devam '
                    'sayfası için sağdaki panelden kullanıcı incelemesi gerekip gerekmediğini belirler.',size=9,color=MUTED,
                    justify='left',wraplength=555).pack(anchor='w',padx=20,pady=(0,12))
         initial_mixed=tk.BooleanVar(value=self.settings.review_initial_mixed)
@@ -890,6 +897,7 @@ class ArarApp:
                     pause_on_later_barcode=False,confirm_cover=confirm_cover.get(),
                     notify_analysis_done=notify_done.get(),stamp_threshold=stamp,
                     scan_stamp_threshold=scan,review_other_barcodes=review_others.get(),
+                    faint_blue_as_blue=faint_blue.get(),
                     review_missing_stamp=review_missing.get(),
                     review_initial_mixed=initial_mixed.get(),review_initial_plain=initial_plain.get(),
                     review_later_mixed=later_mixed.get(),review_later_plain=later_plain.get(),
@@ -908,6 +916,7 @@ class ArarApp:
                 (grouping,defaults.grouping),
                 (review_others,defaults.review_other_barcodes),(confirm_cover,defaults.confirm_cover),
                 (notify_done,defaults.notify_analysis_done),(review_missing,defaults.review_missing_stamp),
+                (faint_blue,defaults.faint_blue_as_blue),
                 (initial_mixed,defaults.review_initial_mixed),(initial_plain,defaults.review_initial_plain),
                 (later_mixed,defaults.review_later_mixed),(later_plain,defaults.review_later_plain),
                 (stamp_value,defaults.stamp_threshold),(scan_value,defaults.scan_stamp_threshold),

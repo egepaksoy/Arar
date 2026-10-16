@@ -16,6 +16,7 @@ class Settings:
     notify_analysis_done: bool = True
     stamp_threshold: int = 85
     scan_stamp_threshold: int = 74
+    faint_blue_as_blue: bool = False
     review_other_barcodes: bool = True
     review_missing_stamp: bool = True
     review_initial_mixed: bool = True
@@ -41,6 +42,7 @@ class Settings:
             settings.notify_analysis_done = bool(settings.notify_analysis_done)
             settings.review_other_barcodes = bool(settings.review_other_barcodes)
             settings.review_missing_stamp = bool(settings.review_missing_stamp)
+            settings.faint_blue_as_blue = bool(settings.faint_blue_as_blue)
             for name in ('review_initial_mixed','review_initial_plain','review_later_mixed','review_later_plain'):
                 setattr(settings,name,bool(getattr(settings,name)))
             try:

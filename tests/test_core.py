@@ -9,7 +9,7 @@ from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject,NameObject,DecodedStreamObject
 from arar.barcodes import WIDTHS, read_barcodes
-from arar.detection import analyze_page, list_pages, render_page, _scan_stamps, _stamp_match
+from arar.detection import analyze_page, list_pages, render_page, _scan_stamps, _stamp_match, _classify_color
 from arar.exporter import export_groups, safe_filename
 from arar.models import PageResult, DocumentGroup, DocumentContext, Settings, Evidence, build_groups, ROOT
 from arar.offline import local_path
@@ -35,6 +35,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual((settings.stamp_threshold,settings.scan_stamp_threshold),(85,74))
             self.assertTrue(settings.review_other_barcodes)
             self.assertTrue(settings.review_missing_stamp)
+            self.assertFalse(settings.faint_blue_as_blue)
             self.assertEqual(settings.examples_dir,'')
 
     def test_cover_confirmation_choice_survives_reload(self):
@@ -44,9 +45,11 @@ class SettingsTests(unittest.TestCase):
                 with self.subTest(enabled=enabled):
                     settings.confirm_cover=enabled
                     settings.notify_analysis_done=enabled
+                    settings.faint_blue_as_blue=enabled
                     settings.save()
                     self.assertEqual(Settings.load().confirm_cover,enabled)
                     self.assertEqual(Settings.load().notify_analysis_done,enabled)
+                    self.assertEqual(Settings.load().faint_blue_as_blue,enabled)
 
 
 class StampThresholdSettingsTests(unittest.TestCase):
@@ -169,6 +172,44 @@ class ContextRuleTests(unittest.TestCase):
 
 
 class DetectionTests(unittest.TestCase):
+    def test_faint_blue_option_requires_blue_ink_and_preserves_neutral_colors(self):
+        for color,normal,enabled in (
+            ((30,60,180),'blue','blue'),
+            ((180,180,220),'faint','blue'),
+            ((228,232,240),'black','blue'),
+            ((241,244,254),'none','blue'),
+            ((30,30,30),'black','black'),
+            ((190,190,190),'black','black'),
+            ((180,181,184),'black','black'),
+            ((240,240,240),'none','none'),
+            ((180,30,30),'black','black'),
+            ((30,180,30),'black','black'),
+            ((255,255,255),'none','none'),
+        ):
+            with self.subTest(color=color):
+                image=Image.new('RGB',(24,24),color)
+                self.assertEqual(_classify_color(image),normal)
+                self.assertEqual(_classify_color(image,faint_blue_as_blue=True),enabled)
+        image=Image.new('RGB',(48,48),(190,190,190))
+        image.paste((180,180,220),(0,0,5,5))
+        self.assertEqual(_classify_color(image,faint_blue_as_blue=True),'black')
+
+    def test_scan_matching_applies_faint_blue_option_without_accepting_black(self):
+        with patch('arar.detection._template_peak',return_value=(.90,(10,10))):
+            for color,normal,enabled in (((180,180,220),'faint','blue'),((80,80,80),'black','black')):
+                with self.subTest(color=color):
+                    image=Image.new('RGB',(120,120),color)
+                    self.assertEqual({item.kind for item in _scan_stamps(image,1.25)},{normal})
+                    self.assertEqual({item.kind for item in _scan_stamps(image,1.25,faint_blue_as_blue=True)},{enabled})
+
+    @requires_examples
+    def test_faint_blue_option_changes_cover_eligibility_and_preserves_black_stamps(self):
+        for name,stamp,state in (('Örnek-4','blue','cover'),('Örnek-6','black','review'),('Örnek-9','mixed','review')):
+            with self.subTest(name=name):
+                result=analyze_page(list_pages(ROOT/'Örnek/Kolay'/f'{name}.pdf')[0],faint_blue_as_blue=True)
+                self.assertEqual((result.stamp,result.state),(stamp,state))
+                self.assertTrue(result.target_found)
+
     def test_first_page_missing_report_and_stamp_is_an_error(self):
         with tempfile.TemporaryDirectory() as folder:
             source=Path(folder)/'blank.pdf'
