@@ -14,6 +14,7 @@ activate_local_dependencies()
 from pypdf import PdfWriter
 from arar.app import ArarApp
 from arar.models import PageResult, Settings, build_groups
+from arar.scanning import ScanStore, encode_pages
 
 
 @unittest.skipUnless(os.environ.get('ARAR_UI_TESTS')=='1','Masaüstü testi için ARAR_UI_TESTS=1 ayarlayın.')
@@ -43,7 +44,8 @@ class DesktopTests(unittest.TestCase):
         with self.source.open('wb') as handle:
             writer.write(handle)
         self.root=tk.Tk()
-        with patch('arar.app.Settings.load',return_value=Settings(notify_analysis_done=False)):
+        with patch('arar.app.Settings.load',return_value=Settings(notify_analysis_done=False)), \
+                patch('arar.app.ScanStore',return_value=ScanStore(Path(self.temp.name)/'queue')):
             self.app=ArarApp(self.root)
         self.app.pages=[PageResult(str(self.source),i) for i in range(2)]
         self.app.sources=[str(self.source)]
@@ -110,6 +112,133 @@ class DesktopTests(unittest.TestCase):
             self.root.update()
             loaded=Settings.load()
             self.assertEqual((loaded.stamp_threshold,loaded.scan_stamp_threshold),(78,68))
+
+    def test_scan_settings_are_saved_and_fit_in_dialog(self):
+        canon=Path(self.temp.name)/'Canon'
+        kodak=Path(self.temp.name)/'Kodak'
+        archive=Path(self.temp.name)/'archive'
+        for folder in (canon,kodak,archive):
+            folder.mkdir()
+        with patch('arar.models.ROOT',Path(self.temp.name)):
+            self.app.show_settings()
+            self.root.update()
+            dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+            tabs=next(widget for widget in dialog.winfo_children() if widget.winfo_class()=='TNotebook')
+            tabs.select(4)
+            self.root.update()
+            scanning=dialog.nametowidget(tabs.tabs()[4])
+            option=next(widget for widget in self.descendants(scanning) if widget.winfo_class()=='TCheckbutton')
+            self.assertFalse(option.instate(['selected']))
+            option.invoke()
+            choose=[widget for widget in self.descendants(scanning) if widget.winfo_class()=='TButton'
+                    and widget.cget('text')=='Seç']
+            with patch('arar.app.filedialog.askdirectory',side_effect=[str(canon),str(kodak),str(archive)]):
+                for button in choose:
+                    button.invoke()
+            for widget in scanning.winfo_children():
+                self.assertLessEqual(widget.winfo_y()+widget.winfo_reqheight(),scanning.winfo_height())
+            save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                      and widget.cget('text')=='Ayarları kaydet')
+            save.invoke()
+            self.root.update()
+            loaded=Settings.load()
+            self.assertTrue(loaded.auto_watch)
+            self.assertEqual((loaded.canon_input_dir,loaded.kodak_input_dir,loaded.archive_dir),
+                             (str(canon),str(kodak),str(archive)))
+            self.app.settings.auto_watch=False
+
+    def _queued_scan(self,name='scan.pdf'):
+        source=Path(self.temp.name)/name
+        source.write_bytes(self.source.read_bytes())
+        stat=source.stat()
+        job_id=self.app.scan_store.enqueue(source,'Canon',(stat.st_size,stat.st_mtime_ns))
+        job=next(job for job in self.app.scan_store.jobs() if job['id']==job_id)
+        from arar.scanning import decode_pages
+        pages=decode_pages(job['pages'])
+        pages[0].state='cover'
+        pages[0].barcode='REPORT'
+        pages[1].state='attachment'
+        self.app.scan_store.update(job_id,status='review',pages=encode_pages(pages))
+        return job_id
+
+    def test_incoming_scan_does_not_replace_review_and_manual_decisions_are_persistent(self):
+        first=self._queued_scan()
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.app.open_scan()
+        self.root.update()
+        self.assertEqual(self.app.scan_job_id,first)
+        self.app.pages[0].manual_barcode='USER'
+        self.app.pages[0].decision='cover'
+        self.app._save_scan_review()
+        second=self._queued_scan('second.pdf')
+        self.app.events.put(('scan_ready',second))
+        self.pump_until(lambda:self.app.events.empty())
+        self.assertEqual(self.app.scan_job_id,first)
+        self.assertEqual(self.app.pages[0].number,'USER')
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.app.scan_combo.current(self.app.scan_ids.index(first))
+        self.app.open_scan()
+        self.assertEqual((self.app.pages[0].number,self.app.pages[0].decision),('USER','cover'))
+
+    def test_scan_is_archived_only_after_user_export_and_source_is_preserved(self):
+        job_id=self._queued_scan()
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.app.open_scan()
+        archive=Path(self.temp.name)/'archive'
+        self.app.settings.archive_dir=str(archive)
+        self.assertFalse(archive.exists())
+        with patch('arar.app.messagebox.showinfo'),patch('arar.app.messagebox.showerror') as error:
+            self.app.export_btn.invoke()
+            self.pump_until(lambda:not self.app.busy)
+        error.assert_not_called()
+        job=next(job for job in self.app.scan_store.jobs() if job['id']==job_id)
+        self.assertEqual(job['status'],'done')
+        self.assertTrue((Path(job['archive'])/'REPORT.pdf').is_file())
+        self.assertTrue((Path(job['archive'])/'Arar_onay.json').is_file())
+        self.assertTrue(Path(job['original']).is_file())
+        self.assertIsNone(self.app.scan_job_id)
+
+    def test_running_watcher_ingests_and_analyzes_without_replacing_manual_workspace(self):
+        incoming=Path(self.temp.name)/'incoming'
+        incoming.mkdir()
+        (incoming/'new.pdf').write_bytes(self.source.read_bytes())
+        self.app.settings.auto_watch=True
+        self.app.settings.canon_input_dir=str(incoming)
+        self.app.settings.archive_dir=str(Path(self.temp.name)/'archive')
+        self.app.scan_worker.watcher.stable_seconds=0
+        original_pages=list(self.app.pages)
+        def analyze(page,*args,**kwargs):
+            page.state='cover' if page.index==0 else 'attachment'
+            page.barcode='AUTO' if page.index==0 else ''
+            page.target_found=page.index==0
+            page.stamp='blue' if page.index==0 else 'none'
+            return page
+        with patch('arar.scanning.analyze_page',side_effect=analyze):
+            self.pump_until(lambda:any(job['status']=='review' for job in self.app.scan_store.jobs()))
+        self.assertEqual(self.app.pages,original_pages)
+        self.assertEqual(self.app.sources,[str(self.source)])
+        self.assertFalse(Path(self.app.settings.archive_dir).exists())
+        self.app.settings.auto_watch=False
+
+    def test_manual_multi_source_export_rolls_back_if_later_source_fails(self):
+        second=Path(self.temp.name)/'second.pdf'
+        second.write_bytes(self.source.read_bytes())
+        self.app.pages=[PageResult(str(self.source),0,state='cover',barcode='A'),
+                        PageResult(str(second),0,state='cover',barcode='B')]
+        self.app.sources=[str(self.source),str(second)]
+        self.app._refresh()
+        archive=Path(self.temp.name)/'archive'
+        self.app.settings.archive_dir=str(archive)
+        second.unlink()
+        with patch('arar.app.messagebox.showerror') as error:
+            self.app.export()
+            self.pump_until(lambda:not self.app.busy)
+        error.assert_called_once()
+        self.assertEqual(list(archive.rglob('*.pdf')),[])
+        self.assertEqual(list(archive.rglob('Arar_onay.json')),[])
 
     def test_defaults_restore_every_setting_only_after_save(self):
         previous=Settings(grouping='sequential',pause_on_later_barcode=True,confirm_cover=False,

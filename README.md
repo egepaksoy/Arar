@@ -14,10 +14,11 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - **Analiz sürerken tamamlanan sayfaları inceleme ve kullanıcı kararı verme.** Arka plandaki sonuçlar manuel kararları değiştirmez.
 - İşlenen sayfalarda yeşil tik, kullanıcı incelemesi gerekenlerde kırmızı işaret.
 - Sırayla gruplama veya art arda kapaklara ortak devam sayfalarını ekleme.
-- Sonraki kapak sayfalarında isteğe bağlı duraklama.
+- Canon/Kodak yerel PDF klasörlerini izleme, otomatik analiz ve kalıcı onay sırası.
 - Kapak işaretleme onay sorusunu ayarlardan açma veya kapatma.
 - PDF analizi tamamlandığında ayarlardan açılıp kapatılabilen “Tarama bitti” bildirimi.
 - Barkod adıyla PDF kaydı, çakışan isimlere numara ekleme ve JSON işlem raporu.
+- Kullanıcı onayından sonra ana arşiv altında tarih/saat klasörüne kayıt.
 
 ## Gereksinimler
 
@@ -58,7 +59,69 @@ Hazırlama, taşıma ve Python uyumluluğu: [README_OFFLINE.md](README_OFFLINE.m
 2. **Analizi başlat** düğmesine basın.
 3. Analiz diğer sayfalarda sürerken tamamlanan sayfaları seçip inceleyin. Henüz işlenmeyen sayfalarda karar düğmeleri kapalıdır.
 4. Gerekirse numarayı düzeltin ve **Kapak olarak onayla** veya **Devam sayfası olarak işaretle** seçeneğini kullanın.
-5. Tüm sayfalar bir belgeye bağlandığında **Belgeleri kaydet** ile yerel bir klasör seçin.
+5. Tüm sayfalar bir belgeye bağlandığında **Onayla ve kaydet** düğmesine basın.
+   Çıktılar ayarlardaki ana arşiv klasörüne tarih/saat altında kaydedilir.
+
+## Otomatik tarama ve arşiv
+
+**Ayarlar → Otomatik tarama** bölümünden **Canon giriş klasörü**, **Kodak giriş
+klasörü** ve **Ana arşiv klasörü** seçin. En az bir giriş klasörü yeterlidir.
+**Otomatik klasör izlemeyi aç** seçeneğini etkinleştirip ayarları kaydedin.
+Varsayılan olarak izleme kapalıdır; arşiv konumu proje içindeki `Arşiv/` klasörüdür.
+Giriş ve arşiv klasörleri birbirinden ayrı yerel konumlar olmalıdır; ağ yolları kabul edilmez.
+
+Tarayıcıyı USB üzerinden kendi yazılımıyla kullanın. Canon CaptureOnTouch / Kodak
+Smart Touch profilinde **renkli, çok sayfalı PDF**, benzersiz dosya adı ve seçilen giriş
+klasörüne kayıt ayarlayın. Arar cihazı sürmez; bilgisayara kaydedilmiş PDF’leri işler.
+Tarayıcı yazılımı ve cihaz sürücüleri ayrıca kurulu olmalıdır.
+
+Uygulama açıkken klasörün doğrudan içindeki `.pdf` / `.PDF` dosyaları izlenir;
+alt klasörler aranmaz. İlk etkinleştirmede klasörde zaten bulunan PDF’ler de alınır.
+Dosya boyutu ve değişiklik zamanı en az üç saniye sabit kalınca yerel çalışma kopyası
+oluşturulur; PDF sonlandırıcısı ve sayfalarının okunabilirliği kontrol edilir.
+Yazım sürüyorsa veya PDF açılamıyorsa tekrar beklenir; durum izleme satırında görünür.
+Arşivdeki sonuçlar girişe taşınmamalıdır.
+
+Mühür/barkod analizi arka planda sırayla yapılır. Yeni taramalar mevcut incelemenin
+sayfalarını veya kararlarını değiştirmez. Üstteki tarama listesinden **Taramayı incele**
+ile onay bekleyen bir işlemi açın. İlk uygun işlem, çalışma alanı boşsa otomatik açılır.
+Elle eklenmiş PDF’ler varsa önce o çalışma alanını kaydedin veya temizleyin.
+Otomatik işlem açıkken başka kaynak ekleme kapalıdır; **Dosyaları temizle** incelemeyi
+kapatır, işlemi ve kararlarını tarama sırasından silmez.
+
+**Onayla ve kaydet** düğmesi kullanıcı onayıdır; öncesinde çıktı PDF’leri arşivlenmez.
+Kararsız veya bir belgeye bağlanmamış sayfalar varsa kayıt kapalıdır.
+Her kaynak PDF için, onay zamanına göre ayrı bir işlem klasörü oluşur:
+
+```text
+Arşiv/
+  2026-10-21/
+    14-32-08_Canon_001/
+      THAEK12026124.pdf
+      Arar_islem_raporu.json
+      Arar_onay.json
+    14-32-08_Kodak_001/
+      THAEK12026130.pdf
+```
+
+Elle eklenen kaynaklarda cihaz etiketi `Manuel` olur. Aynı saniyede aynı etiketle
+kayıt yapılırsa `_002`, `_003` ile devam edilir; mevcut dosyaların üzerine yazılmaz.
+İşlem raporu sayfa gruplarını, onay kaydı kaynak PDF’yi ve kaydedilen dosyaları içerir.
+
+Tarama geçmişi, çalışma kopyaları ve onay bekleyen sayfa kararları `.arar/scans/`
+altında yerel olarak tutulur. Uygulama yeniden açıldığında bekleyen işlemler geri gelir;
+kesilen otomatik analiz yeniden sıraya alınır. Aynı kaynak yolu, boyutu ve değişiklik
+zamanına sahip dosya tekrar alınmaz; değişen dosya yeni işlem sayılır. Tamamlanan
+kayıt onay kaydından da doğrulanarak yeniden açılışta ikinci kez işlenmez.
+Kaynak PDF silinmez; başarılı kayıttan sonra uygulamanın çalışma kopyası temizlenir.
+Bekleyen işler varken `.arar/` klasörünü silmeyin.
+
+İzlemeyi kapatmak yeni alımı ve sıradaki otomatik analizleri durdurur; başlamış analiz
+tamamlanır ve mevcut incelemeler kullanılabilir. İzleme uygulama kapalıyken çalışmaz.
+İlk sayfada hem Receiving Report barkodu hem mühür yoksa o dosyanın analizi durur;
+dosya açıldığında hata gösterilir. Diğer taramalar sırada işlenebilir.
+
+## Sayfa kararları ve ayarlar
 
 **Ayarlar → İşlem ayarları → Barkod incelemesi** bölümündeki
 **Receiving Report olmadan başka barkod bulunursa incelemeye al** seçeneği

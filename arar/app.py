@@ -5,13 +5,15 @@ from dataclasses import replace
 import queue
 import re
 import threading
+import uuid
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 from .models import Settings, DocumentContext, ROOT, build_groups
 from .detection import analyze_page, list_pages, render_page
-from .exporter import export_groups
 from .offline import local_path
+from .scanning import (ScanStore, ScanWorker, archive_committed, decode_pages,
+                       encode_pages, reserve_archive, write_archive)
 
 BG='#f3f6fb'
 WHITE='#ffffff'
@@ -35,6 +37,14 @@ class ArarApp:
         self.pages=[]
         self.sources=[]
         self.events=queue.Queue()
+        self.scan_store=ScanStore()
+        self.scan_store.recover()
+        self.scan_worker=ScanWorker(self.scan_store,self.events,replace(self.settings))
+        self.scan_job_id=None
+        self.scan_ids=[]
+        self.scan_auto_open=True
+        self.watch_error=''
+        self.watch_var=tk.StringVar()
         self.cancel=threading.Event()
         self.resume=threading.Event()
         self.busy=False
@@ -70,6 +80,7 @@ class ArarApp:
         self._layout()
         self._refresh()
         self.poll_after=self.root.after(80,self._poll)
+        self.scan_after=self.root.after(300,self._scan_tick)
 
     def _styles(self):
         style=ttk.Style(self.root)
@@ -118,6 +129,15 @@ class ArarApp:
         self.stop_btn.pack(side='left',padx=4)
         self.settings_btn=ttk.Button(controls,text='Ayarlar',command=self.show_settings)
         self.settings_btn.pack(side='left',padx=(12,0))
+
+        scans=tk.Frame(toolbar,bg=BG)
+        scans.grid(row=2,column=0,columnspan=2,sticky='ew',pady=(12,0))
+        self.scan_combo=ttk.Combobox(scans,state='readonly',width=62)
+        self.scan_combo.pack(side='left')
+        self.scan_open_btn=ttk.Button(scans,text='Taramayı incele',command=self.open_scan)
+        self.scan_open_btn.pack(side='left',padx=8)
+        tk.Label(scans,textvariable=self.watch_var,font=('Segoe UI',9),fg=MUTED,bg=BG,
+                 wraplength=370,justify='left').pack(side='left',padx=8)
 
         stats=tk.Frame(self.root,bg=BG)
         stats.grid(row=1,column=0,sticky='ew',padx=24,pady=(0,16))
@@ -270,7 +290,7 @@ class ArarApp:
         export.grid(row=1,column=0,columnspan=2,sticky='ew',padx=16,pady=(10,16))
         self.output_label=self.label(export,'',size=9,color=MUTED,wraplength=254,anchor='w',justify='left')
         self.output_label.pack(fill='x',pady=(0,8))
-        self.export_btn=ttk.Button(export,text='Belgeleri kaydet',style='Primary.TButton',command=self.export)
+        self.export_btn=ttk.Button(export,text='Onayla ve kaydet',style='Primary.TButton',command=self.export)
         self.export_btn.pack(fill='x')
 
         footer=tk.Frame(self.root,bg=WHITE,highlightbackground=LINE,highlightthickness=1)
@@ -293,6 +313,10 @@ class ArarApp:
         state='disabled' if value else 'normal'
         for button in (self.add_btn,self.example_btn,self.remove_btn,self.clear_btn,self.settings_btn):
             button.configure(state=state)
+        if self.scan_job_id:
+            for button in (self.add_btn,self.example_btn):
+                button.configure(state='disabled')
+        self.scan_open_btn.configure(state=state)
         self.analyze_btn.configure(state='normal' if self.pages and not value else 'disabled')
         self.stop_btn.configure(state='normal' if value else 'disabled')
         self._refresh_summary()
@@ -328,6 +352,8 @@ class ArarApp:
         self._import(paths)
 
     def _import(self,paths):
+        if self.scan_job_id:
+            return
         self.cancel.clear()
         self.operation='import'
         self._set_busy(True)
@@ -352,6 +378,9 @@ class ArarApp:
         indices=self.source_list.curselection()
         if self.busy or not indices:
             return
+        if self.scan_job_id:
+            self.clear_files()
+            return
         removed={self.sources[i] for i in indices}
         self.pages=[p for p in self.pages if p.source not in removed]
         self.sources=[source for source in self.sources if source not in removed]
@@ -369,6 +398,9 @@ class ArarApp:
     def clear_files(self):
         if self.busy:
             return
+        self._save_scan_review()
+        self.scan_job_id=None
+        self.scan_auto_open=False
         self.pages.clear()
         self.sources.clear()
         self.selected=None
@@ -383,6 +415,84 @@ class ArarApp:
         self._refresh()
         self._draw_preview()
         self.status_var.set('Dosyalar çalışma alanından temizlendi. Yeni PDF ekleyebilirsiniz.')
+
+    def _save_scan_review(self):
+        if self.scan_job_id:
+            job=self.scan_store.get(self.scan_job_id)
+            if job and job['status'] in ('review','error'):
+                self.scan_store.update(self.scan_job_id,pages=encode_pages(self.pages),status='review')
+
+    def _scan_tick(self):
+        self.scan_after=None
+        if self.closing:
+            return
+        try:
+            self.scan_worker.settings=replace(self.settings)
+            if self.settings.auto_watch:
+                self.scan_worker.start()
+            self._refresh_scan_queue()
+            if self.scan_auto_open and not self.pages and not self.busy and not self.root.grab_current():
+                self.open_scan(automatic=True)
+        except Exception as exc:
+            self.watch_error=str(exc)
+            self.watch_var.set('İzleme hatası: '+str(exc))
+        self.scan_after=self.root.after(1000,self._scan_tick)
+
+    def _refresh_scan_queue(self):
+        jobs=self.scan_store.jobs(pending_only=True,include_pages=False)
+        labels={'queued':'Sırada','analyzing':'Analiz ediliyor','review':'Onay bekliyor',
+                'error':'Kontrol gerekli','exporting':'Kaydediliyor'}
+        selected=self.scan_combo.current()
+        selected_id=self.scan_ids[selected] if 0<=selected<len(self.scan_ids) else None
+        self.scan_ids=[job['id'] for job in jobs]
+        self.scan_combo.configure(values=[f"{job['label']} • {Path(job['original']).name} • {labels[job['status']]}" for job in jobs])
+        if self.scan_ids:
+            self.scan_combo.current(self.scan_ids.index(selected_id) if selected_id in self.scan_ids else 0)
+        else:
+            self.scan_combo.set('Bekleyen otomatik tarama yok')
+        state='İzleme açık' if self.settings.auto_watch else 'İzleme kapalı'
+        self.watch_var.set(state+f' • {len(jobs)} bekleyen işlem'+(' • '+self.watch_error if self.watch_error else ''))
+
+    def open_scan(self,automatic=False):
+        if self.busy:
+            return
+        jobs=[job for job in self.scan_store.jobs(pending_only=True,include_pages=False) if job['status'] in ('review','error')]
+        if automatic:
+            job=next(iter(jobs),None)
+        else:
+            index=self.scan_combo.current()
+            job_id=self.scan_ids[index] if 0<=index<len(self.scan_ids) else None
+            job=next((job for job in jobs if job['id']==job_id),None)
+        if not job:
+            if not automatic:
+                self.status_var.set('Tarama analizinin tamamlanmasını bekleyin.')
+            return
+        job=self.scan_store.get(job['id'])
+        if self.pages and not self.scan_job_id:
+            if not automatic:
+                self.status_var.set('Taramayı açmak için önce mevcut çalışma alanını kaydedin veya temizleyin.')
+            return
+        self._save_scan_review()
+        self.scan_job_id=job['id']
+        self.scan_auto_open=False
+        self.pages=decode_pages(job['pages'])
+        self.sources=list(dict.fromkeys(page.source for page in self.pages))
+        self.selected=None
+        self.inspected_key=None
+        self.preview_generation+=1
+        self.preview_min_generation=self.preview_generation
+        self.preview_cache.clear()
+        self.preview_data=None
+        self.preview_zoom=1.0
+        self.preview_layout=None
+        self.page_sort_column=None
+        self._refresh()
+        self.page_tree.yview_moveto(0)
+        self._page_selected()
+        self.status_var.set(job['label']+' • '+Path(job['original']).name+' • '+
+                            (job['error'] or 'İnceleyip Onayla ve kaydet düğmesine basın.'))
+        if self.pages and self.pages[0].first_page_error:
+            messagebox.showerror('İlk sayfa kontrolü',self.pages[0].reason,parent=self.root)
 
     def _review_interaction(self,event=None):
         if self.operation=='analysis':
@@ -609,7 +719,7 @@ class ArarApp:
             hints.append(f'{waiting} devam sayfası henüz belgeye atanmadı.')
         self.group_hint.configure(text=' '.join(hints) if hints else
                                   'Belge satırına çift tıklayarak sayfaları görün.')
-        self.output_label.configure(text='Kayıt klasörü: '+self.settings.output_dir)
+        self.output_label.configure(text='Ana arşiv: '+self.settings.archive_dir)
         self.export_btn.configure(state='normal' if groups and not unassigned and not self.busy else 'disabled')
 
     def analyze(self):
@@ -719,6 +829,7 @@ class ArarApp:
         self._update_row(index,self.pages[index])
         self._refresh_summary()
         self._inspector(reset_barcode=index==self.selected)
+        self._save_scan_review()
         self.status_var.set('Sayfa kararı güncellendi; analiz devam ediyor.' if self.operation=='analysis' else
                             'Sayfa kararı güncellendi. Belge grupları yeniden hesaplandı.')
         review=next((i for i,p in enumerate(self.pages) if p.effective_state=='review'),None)
@@ -741,27 +852,58 @@ class ArarApp:
         if not groups or unassigned:
             messagebox.showwarning('İnceleme tamamlanmadı','Tüm sayfalar bir belgeye atanmalı ve kapak kararları tamamlanmalı.')
             return
-        folder=filedialog.askdirectory(title='Yerel kayıt klasörünü seçin',initialdir=str(ROOT))
-        if not folder:
-            return
         try:
-            folder=str(local_path(folder,must_exist=True))
+            self.settings.validate_scan_paths()
+            archive_root=local_path(self.settings.archive_dir)
         except (ValueError,OSError) as exc:
             messagebox.showerror('Yerel klasör gerekli',str(exc))
             return
-        self.settings.output_dir=folder
-        try:
-            self.settings.save()
-        except OSError:
-            pass
+        job_id=self.scan_job_id
+        self._save_scan_review()
+        job=self.scan_store.get(job_id)
+        # Freeze decisions before handing them to the export worker.
+        groups,_=build_groups([replace(page) for page in self.pages],self.settings.grouping)
         self._set_busy(True)
         self.stop_btn.configure(state='disabled')
         self.operation='export'
         self.status_var.set('Belgeler yerel klasöre kaydediliyor…')
         def work():
+            paths=[]
+            folders=[]
+            folder=None
             try:
-                self.events.put(('exported',export_groups(groups,folder)))
+                if job:
+                    folder=reserve_archive(archive_root,job['label'])
+                    self.scan_store.update(job_id,status='exporting',archive=str(folder))
+                    paths=write_archive(groups,folder,job_id,job['original'])
+                    self.scan_store.finish(job)
+                else:
+                    for source in dict.fromkeys(group.pages[0].source for group in groups):
+                        folder=reserve_archive(archive_root,'Manuel')
+                        folders.append(folder)
+                        batch=[group for group in groups if group.pages[0].source==source]
+                        paths.extend(write_archive(batch,folder,uuid.uuid4().hex,source))
+                self.events.put(('archived',paths,job_id))
             except Exception as exc:
+                # A completed on-disk commit must never become an approval
+                # candidate again if the final database update was interrupted.
+                if job_id and folder and archive_committed(folder,job_id):
+                    self.events.put(('archived',paths,job_id))
+                    return
+                if job_id:
+                    try:
+                        self.scan_store.update(job_id,status='review',error=str(exc))
+                    except Exception:
+                        pass  # Keep exporting state for startup recovery.
+                else:
+                    try:
+                        for path in paths:
+                            path.unlink(missing_ok=True)
+                        for reserved in folders:
+                            (reserved/'Arar_onay.json').unlink(missing_ok=True)
+                            reserved.rmdir()
+                    except OSError as cleanup_error:
+                        exc=RuntimeError(str(exc)+'\nKısmi kayıt klasörünü kontrol edin: '+str(cleanup_error))
                 self.events.put(('error','Kayıt başarısız: '+str(exc)))
         threading.Thread(target=work,daemon=True).start()
 
@@ -781,10 +923,12 @@ class ArarApp:
         accuracy=tk.Frame(tabs,bg=WHITE)
         decisions=tk.Frame(tabs,bg=WHITE)
         examples=tk.Frame(tabs,bg=WHITE)
+        scanning=tk.Frame(tabs,bg=WHITE)
         tabs.add(general,text='İşlem ayarları')
         tabs.add(accuracy,text='Mühür doğruluğu')
         tabs.add(decisions,text='Mühür kararları')
         tabs.add(examples,text='Örnek dosyalar')
+        tabs.add(scanning,text='Otomatik tarama')
         output_dir=tk.StringVar(value=self.settings.output_dir)
 
         self.label(general,'Belge gruplama',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,8))
@@ -884,6 +1028,37 @@ class ArarApp:
                    'Bu bilgisayarda bulunan yerel bir klasör seçin.',
                    size=9,color=MUTED,justify='left').pack(anchor='w',padx=20,pady=12)
 
+        self.label(scanning,'Yerel tarama klasörleri',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,12))
+        auto_watch=tk.BooleanVar(value=self.settings.auto_watch)
+        ttk.Checkbutton(scanning,text='Otomatik klasör izlemeyi aç',variable=auto_watch).pack(anchor='w',padx=20,pady=(0,8))
+        canon_dir=tk.StringVar(value=self.settings.canon_input_dir)
+        kodak_dir=tk.StringVar(value=self.settings.kodak_input_dir)
+        archive_dir=tk.StringVar(value=self.settings.archive_dir)
+        def choose_scan_folder(variable,title):
+            chosen=filedialog.askdirectory(title=title,parent=dialog)
+            if chosen:
+                try:
+                    variable.set(str(local_path(chosen,must_exist=True)))
+                except (ValueError,OSError) as exc:
+                    messagebox.showerror('Yerel klasör gerekli',str(exc),parent=dialog)
+        for title,variable in (('Canon giriş klasörü',canon_dir),('Kodak giriş klasörü',kodak_dir),
+                               ('Ana arşiv klasörü',archive_dir)):
+            self.label(scanning,title,bold=True).pack(anchor='w',padx=20,pady=(12,4))
+            row=tk.Frame(scanning,bg=WHITE)
+            row.pack(fill='x',padx=20)
+            ttk.Entry(row,textvariable=variable,state='readonly').pack(side='left',fill='x',expand=True)
+            ttk.Button(row,text='Seç',command=lambda v=variable,t=title:choose_scan_folder(v,t)).pack(side='left',padx=(6,0))
+            if variable is not archive_dir:
+                ttk.Button(row,text='Temizle',command=lambda v=variable:v.set('')).pack(side='left',padx=(6,0))
+        self.label(scanning,'Tarayıcı yazılımını renkli, çok sayfalı PDF’leri seçtiğiniz giriş klasörüne '
+                   'kaydetmek üzere ayarlayın. En az bir giriş klasörü yeterlidir. Alt klasörler izlenmez. '
+                   'İlk açılışta klasördeki mevcut PDF’ler de sıraya alınır.\n\n'
+                   'Uygulama açıkken yazımı tamamlanan PDF’ler otomatik analiz edilir. Sonuçlar '
+                   'Onayla ve kaydet düğmesine basana kadar arşivlenmez. Bekleyen işlemler ve sayfa '
+                   'kararları yeniden açılışta korunur. İzlemeyi kapatmak yeni dosya alımını durdurur; '
+                   'başlamış analiz tamamlanır. Giriş ve arşiv konumları ayrı, yerel klasörler olmalıdır.',
+                   size=9,color=MUTED,justify='left',wraplength=555).pack(anchor='w',padx=20,pady=14)
+
         def save():
             try:
                 try:
@@ -901,7 +1076,9 @@ class ArarApp:
                     review_missing_stamp=review_missing.get(),
                     review_initial_mixed=initial_mixed.get(),review_initial_plain=initial_plain.get(),
                     review_later_mixed=later_mixed.get(),review_later_plain=later_plain.get(),
-                    examples_dir=examples_dir.get(),output_dir=output_dir.get())
+                    examples_dir=examples_dir.get(),output_dir=output_dir.get(),
+                    auto_watch=auto_watch.get(),canon_input_dir=canon_dir.get(),
+                    kodak_input_dir=kodak_dir.get(),archive_dir=archive_dir.get())
                 updated.save()
             except (OSError,ValueError) as exc:
                 messagebox.showerror('Ayarlar kaydedilemedi',str(exc),parent=dialog)
@@ -921,6 +1098,8 @@ class ArarApp:
                 (later_mixed,defaults.review_later_mixed),(later_plain,defaults.review_later_plain),
                 (stamp_value,defaults.stamp_threshold),(scan_value,defaults.scan_stamp_threshold),
                 (examples_dir,defaults.examples_dir),(output_dir,defaults.output_dir),
+                (auto_watch,defaults.auto_watch),(canon_dir,defaults.canon_input_dir),
+                (kodak_dir,defaults.kodak_input_dir),(archive_dir,defaults.archive_dir),
             ):
                 variable.set(value)
         actions=tk.Frame(dialog,bg=WHITE)
@@ -938,7 +1117,33 @@ class ArarApp:
             for _ in range(40):
                 event=self.events.get_nowait()
                 kind=event[0]
-                if kind=='imported':
+                if kind=='scan_queue':
+                    self._refresh_scan_queue()
+                elif kind=='watch_status':
+                    self.watch_error=event[1]
+                elif kind=='scan_ready':
+                    self._refresh_scan_queue()
+                    if not self.pages:
+                        self.scan_auto_open=True
+                    job=self.scan_store.get(event[1])
+                    if job and self.settings.notify_analysis_done and not self.root.grab_current():
+                        pages=decode_pages(job['pages'])
+                        if job['status']=='review' and pages and not any(page.state=='pending' for page in pages) and not pages[0].first_page_error:
+                            messagebox.showinfo('Tarama bitti',Path(job['original']).name+
+                                '\n\nAnaliz sonucu tarama kuyruğunda onayınızı bekliyor.',parent=self.root)
+                elif kind=='archived':
+                    self._set_busy(False)
+                    paths,job_id=event[1:]
+                    count=sum(path.suffix.lower()=='.pdf' for path in paths)
+                    locations='\n'.join(dict.fromkeys(str(path.parent) for path in paths))
+                    if job_id:
+                        self.scan_job_id=None
+                        self.clear_files()
+                        self.scan_auto_open=True
+                    self._refresh_scan_queue()
+                    self.status_var.set(f'{count} PDF arşive kaydedildi: '+locations)
+                    messagebox.showinfo('Belgeler kaydedildi',f'{count} PDF kaydedildi.\n\n'+locations,parent=self.root)
+                elif kind=='imported':
                     self.pages.extend(event[1])
                     self.sources=list(dict.fromkeys(p.source for p in self.pages))
                     self._set_busy(False)
@@ -964,6 +1169,7 @@ class ArarApp:
                         messagebox.showerror('İlk sayfa kontrolü',Path(page.source).name+'\n\n'+page.reason,parent=self.root)
                 elif kind=='analysis_done':
                     self._set_busy(False)
+                    self._save_scan_review()
                     self._refresh_summary()
                     self.status_var.set('Analiz durduruldu. İncelenmeyen sayfalar bekliyor.' if event[1] else
                                         'Analiz tamamlandı. İnceleme bekleyen sayfaları kontrol edin.')
@@ -1009,9 +1215,11 @@ class ArarApp:
         if self.busy and not messagebox.askyesno('İşlem sürüyor','İşlemi sonlandırıp uygulamayı kapatmak istiyor musunuz?'):
             return
         self.closing=True
+        self._save_scan_review()
+        self.scan_worker.stop.set()
         self.cancel.set()
         self.resume.set()
-        for timer in (self.poll_after,self.debounce):
+        for timer in (self.poll_after,self.debounce,self.scan_after):
             if timer:
                 self.root.after_cancel(timer)
         self.root.destroy()

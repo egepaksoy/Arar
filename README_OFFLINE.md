@@ -224,8 +224,18 @@ dağıtım için hazırlık scriptini kullanın.
   sistem kurulum paketleri yerel ortamdan sağlanmalıdır. `libs/` hazırlığı bunu indirmez.
 - **libs zaten dolu:** Yenileme bilinçli olarak engellenmiştir; geliştirme bilgisayarında
   `--replace` ile eski klasör yedeği korunarak güncelleyin.
-- **Kayıt klasörü bulunamıyor:** Projeyle eski `.arar` ayarlarını taşıdıysanız yeni bilgisayarda
-  mevcut bir yerel kayıt klasörü seçin. Ayarlar hâlâ mevcut sistemde tutulur.
+- **Kayıt klasörü bulunamıyor:** Ayarlar → Otomatik tarama bölümünden yerel ana
+  arşiv klasörünü seçin. Başka bilgisayara geçildiğinde giriş klasörlerini de güncelleyin.
+- **Otomatik PDF alınmıyor:** İzlemenin açık ve uygulamanın çalışıyor olduğunu kontrol edin.
+  PDF giriş klasörünün doğrudan içinde olmalı; alt klasörler izlenmez. Dosya yazımı
+  bitmeli ve PDF açılabilir olmalıdır. Üstteki izleme satırı hatayı gösterir.
+- **Tarama daha önce alınmış:** Aynı yol/boyut/değişiklik zamanındaki kaynak tekrar
+  sıraya eklenmez. Üstteki tarama listesindeki mevcut onay bekleyen işlemi açın.
+  Tarayıcıda her tarama için benzersiz dosya adı kullanın.
+
+Tarama sırası ve bekleyen kararlar `.arar/scans/` içinde tutulur. Uygulama güncellenirken
+bu klasörü koruyun. Tarayıcı sürücüleri ve CaptureOnTouch / Smart Touch kurulumları
+Python `libs/` paketlerinden ayrıdır; cihaz yazılımı renkli PDF’leri yerel girişe kaydeder.
 
 Uygulama font, model, tokenizer veya ağırlık dosyası indirmez. Barkod ve mühür tespiti
 yerel kodu ve `assets/` şablonlarını kullanır. Fontlar işletim sistemindendir.

@@ -24,6 +24,10 @@ class Settings:
     review_later_mixed: bool = False
     review_later_plain: bool = False
     examples_dir: str = ''
+    auto_watch: bool = False
+    canon_input_dir: str = ''
+    kodak_input_dir: str = ''
+    archive_dir: str = str(ROOT / 'Arşiv')
 
     @classmethod
     def load(cls):
@@ -43,6 +47,8 @@ class Settings:
             settings.review_other_barcodes = bool(settings.review_other_barcodes)
             settings.review_missing_stamp = bool(settings.review_missing_stamp)
             settings.faint_blue_as_blue = bool(settings.faint_blue_as_blue)
+            settings.auto_watch = bool(settings.auto_watch)
+            settings.validate_scan_paths()
             for name in ('review_initial_mixed','review_initial_plain','review_later_mixed','review_later_plain'):
                 setattr(settings,name,bool(getattr(settings,name)))
             try:
@@ -66,12 +72,35 @@ class Settings:
         local_path(self.output_dir)
         if self.examples_dir:
             local_path(self.examples_dir)
+        self.validate_scan_paths()
         folder = ROOT / '.arar'
         folder.mkdir(exist_ok=True)
         target = folder / 'settings.json'
         temp = folder / 'settings.tmp'
         temp.write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(target)
+
+    def validate_scan_paths(self):
+        if not isinstance(self.archive_dir,str) or not self.archive_dir.strip():
+            raise ValueError('Ana arşiv klasörü seçin.')
+        archive=local_path(self.archive_dir)
+        inputs=[]
+        for name in ('canon_input_dir','kodak_input_dir'):
+            value=getattr(self,name)
+            if not value:
+                continue
+            folder=local_path(value)
+            if folder.exists() and not folder.is_dir():
+                raise ValueError('Giriş konumu bir klasör olmalıdır.')
+            if archive==folder or archive.is_relative_to(folder) or folder.is_relative_to(archive):
+                raise ValueError('Giriş ve arşiv klasörleri ayrı konumlarda olmalıdır.')
+            if folder in inputs:
+                raise ValueError('Canon ve Kodak için farklı giriş klasörleri seçin.')
+            inputs.append(folder)
+        if self.auto_watch and not inputs:
+            raise ValueError('Otomatik izleme için en az bir giriş klasörü seçin.')
+        if archive.exists() and not archive.is_dir():
+            raise ValueError('Ana arşiv konumu bir klasör olmalıdır.')
 
 
 @dataclass
