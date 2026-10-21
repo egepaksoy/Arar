@@ -13,7 +13,7 @@ import uuid
 
 from .detection import analyze_page, list_pages
 from .exporter import export_groups, safe_filename
-from .models import DocumentContext, Evidence, PageResult, ROOT
+from .models import DocumentContext, Evidence, PageResult, ROOT, build_groups
 from .offline import local_path
 
 
@@ -54,7 +54,7 @@ class ScanStore:
             return []
         with closing(self.connect()) as db:
             columns='*' if include_pages else 'id,fingerprint,original,label,snapshot,status,error,archive,created'
-            condition=" WHERE status!='done'" if pending_only else ''
+            condition=" WHERE status NOT IN ('done','dismissed')" if pending_only else ''
             return [dict(row) for row in db.execute('SELECT '+columns+' FROM jobs'+condition+' ORDER BY created,id')]
 
     def get(self,job_id):
@@ -76,6 +76,26 @@ class ScanStore:
         with closing(self.connect()) as db,db:
             db.execute('UPDATE jobs SET '+','.join(name+'=?' for name in fields)+' WHERE id=?',
                        [*fields.values(),job_id])
+
+    def transition(self,job_id,expected,status,**fields):
+        if not set(fields)<={'pages','error','archive'}:
+            raise ValueError('Geçersiz işlem güncellemesi.')
+        fields={'status':status,**fields}
+        with closing(self.connect()) as db,db:
+            result=db.execute('UPDATE jobs SET '+','.join(name+'=?' for name in fields)+
+                ' WHERE id=? AND status IN ('+','.join('?' for _ in expected)+')',
+                [*fields.values(),job_id,*expected])
+            return result.rowcount==1
+
+    def dismiss(self,job_ids):
+        removed=[]
+        for job_id in job_ids:
+            job=self.get(job_id)
+            if job and self.transition(job_id,('queued','analyzing','review','error'),'dismissed'):
+                removed.append(job_id)
+                if job['status']!='analyzing':
+                    self.cleanup_snapshot(job)
+        return removed
 
     def enqueue(self,source,label,signature):
         source=local_path(source,must_exist=True)
@@ -124,10 +144,15 @@ class ScanStore:
                                 error='Önceki kayıt tamamlanmadı. Kontrol edip yeniden onaylayın.')
             elif job['status']=='done':
                 self.finish(job)
+            elif job['status']=='dismissed':
+                self.cleanup_snapshot(job)
 
     def finish(self,job):
         if job['status']!='done':
             self.update(job['id'],status='done',error='')
+        self.cleanup_snapshot(job)
+
+    def cleanup_snapshot(self,job):
         # Only our own working copy is disposable; the scanner's source stays.
         try:
             snapshot=local_path(job['snapshot'])
@@ -227,31 +252,70 @@ class ScanWorker:
             self.stop.wait(1)
 
     def analyze(self,job,settings):
-        self.store.update(job['id'],status='analyzing',error='')
+        if not self.store.transition(job['id'],('queued',),'analyzing',error=''):
+            return
         self.events.put(('scan_queue',))
         pages=decode_pages(job['pages'])
         context=DocumentContext()
         try:
             for page in pages:
-                if self.stop.is_set():
-                    self.store.update(job['id'],status='queued')
+                if self.interrupted(job):
                     return
                 analyze_page(page,self.stop,stamp_threshold=settings.stamp_threshold/100,
                              scan_stamp_threshold=settings.scan_stamp_threshold/100,
                              review_other_barcodes=settings.review_other_barcodes,
                              review_missing_stamp=settings.review_missing_stamp,
                              faint_blue_as_blue=settings.faint_blue_as_blue)
-                if self.stop.is_set():
-                    self.store.update(job['id'],status='queued')
+                if self.interrupted(job):
                     return
                 context.apply(page,settings)
                 context.record(page)
                 if page.first_page_error:
                     break
-            self.store.update(job['id'],status='review',pages=encode_pages(pages))
+            if self.interrupted(job):
+                return
+            groups,unassigned=build_groups(pages,settings.grouping)
+            if settings.auto_save_scans and groups and not unassigned and not any(page.first_page_error for page in pages):
+                self.auto_archive(job,pages,groups,settings)
+                return
+            if not self.store.transition(job['id'],('analyzing',),'review',pages=encode_pages(pages)):
+                self.interrupted(job)
+                return
         except Exception as exc:
-            self.store.update(job['id'],status='error',pages=encode_pages(pages),error=str(exc))
+            if not self.store.transition(job['id'],('analyzing',),'error',pages=encode_pages(pages),error=str(exc)):
+                self.interrupted(job)
+                return
         self.events.put(('scan_ready',job['id']))
+
+    def interrupted(self,job):
+        current=self.store.get(job['id'])
+        if current and current['status']=='dismissed':
+            self.store.cleanup_snapshot(current)
+            return True
+        if self.stop.is_set():
+            self.store.transition(job['id'],('analyzing',),'queued')
+            return True
+        return not current or current['status']!='analyzing'
+
+    def auto_archive(self,job,pages,groups,settings):
+        if not self.store.transition(job['id'],('analyzing',),'exporting',pages=encode_pages(pages)):
+            self.interrupted(job)
+            return
+        self.events.put(('scan_queue',))
+        folder=None
+        try:
+            settings.validate_scan_paths()
+            folder=reserve_archive(settings.archive_dir,job['label'])
+            self.store.update(job['id'],archive=str(folder))
+            paths=write_archive(groups,folder,job['id'],job['original'],automatic=True)
+            self.store.finish(job)
+            self.events.put(('scan_saved',job['id'],str(folder),len(groups)))
+        except Exception as exc:
+            if folder and archive_committed(folder,job['id']):
+                self.events.put(('scan_saved',job['id'],str(folder),len(groups)))
+                return
+            self.store.transition(job['id'],('exporting',),'review',error='Otomatik kayıt başarısız: '+str(exc))
+            self.events.put(('scan_ready',job['id']))
 
 
 def reserve_archive(root,label,now=None):
@@ -268,7 +332,7 @@ def reserve_archive(root,label,now=None):
     raise ValueError('Arşiv işlem klasörü oluşturulamadı.')
 
 
-def write_archive(groups,folder,job_id,original=''):
+def write_archive(groups,folder,job_id,original='',*,automatic=False):
     folder=local_path(folder,must_exist=True)
     created=[]
     marker=folder/'Arar_onay.json'
@@ -276,6 +340,7 @@ def write_archive(groups,folder,job_id,original=''):
     try:
         created=export_groups(groups,folder)
         temporary.write_text(json.dumps({'islem':job_id,'kaynak':original,
+            'kayit_turu':'otomatik' if automatic else 'kullanıcı onayı',
             'onay_zamani':datetime.now().astimezone().isoformat(),
             'dosyalar':[{'ad':path.name,'boyut':path.stat().st_size} for path in created]},
             ensure_ascii=False,indent=2),encoding='utf-8')

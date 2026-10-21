@@ -100,10 +100,104 @@ class ScanTests(unittest.TestCase):
         def missing(page,*args,**kwargs):
             page.state='review'
             page.first_page_error=True
+        self.store.update(job['id'],status='queued')
         with patch('arar.scanning.analyze_page',side_effect=missing) as analyze:
             worker.analyze(job,self.settings)
         self.assertEqual(analyze.call_count,1)
         self.assertTrue(decode_pages(self.store.jobs()[0]['pages'])[0].first_page_error)
+
+    def analyze_clean(self,page,*args,**kwargs):
+        page.state='cover' if page.index==0 else 'attachment'
+        page.barcode='REPORT' if page.index==0 else ''
+        page.target_found=page.index==0
+        page.stamp='blue' if page.index==0 else 'none'
+        return page
+
+    def test_auto_save_only_archives_complete_groups_and_records_automatic_mode(self):
+        job_id=self.enqueue()
+        self.settings.auto_save_scans=True
+        events=queue.Queue()
+        worker=ScanWorker(self.store,events,self.settings)
+        with patch('arar.scanning.analyze_page',side_effect=self.analyze_clean):
+            worker.analyze(self.store.get(job_id),self.settings)
+        job=self.store.get(job_id)
+        self.assertEqual(job['status'],'done')
+        self.assertTrue((Path(job['archive'])/'REPORT.pdf').exists())
+        import json
+        marker=json.loads((Path(job['archive'])/'Arar_onay.json').read_text(encoding='utf-8'))
+        self.assertEqual(marker['kayit_turu'],'otomatik')
+        self.assertTrue(self.source.exists())
+        self.assertIn('scan_saved',[event[0] for event in list(events.queue)])
+        self.assertNotIn('scan_ready',[event[0] for event in list(events.queue)])
+
+    def test_auto_save_does_not_archive_reviews_unassigned_or_first_page_errors(self):
+        job_id=self.enqueue()
+        self.settings.auto_save_scans=True
+        worker=ScanWorker(self.store,queue.Queue(),self.settings)
+        for state,first_error in (('review',False),('attachment',False),('review',True)):
+            with self.subTest(state=state,first_error=first_error):
+                self.store.update(job_id,status='queued')
+                def analyze(page,*args,**kwargs):
+                    page.state=state
+                    page.first_page_error=first_error and page.index==0
+                    return page
+                with patch('arar.scanning.analyze_page',side_effect=analyze):
+                    worker.analyze(self.store.get(job_id),self.settings)
+                self.assertEqual(self.store.get(job_id)['status'],'review')
+                self.assertFalse(Path(self.settings.archive_dir).exists())
+
+    def test_auto_save_failure_keeps_review_and_working_copy(self):
+        job_id=self.enqueue()
+        self.settings.auto_save_scans=True
+        worker=ScanWorker(self.store,queue.Queue(),self.settings)
+        with patch('arar.scanning.analyze_page',side_effect=self.analyze_clean), \
+                patch('arar.scanning.write_archive',side_effect=OSError('Disk full')):
+            worker.analyze(self.store.get(job_id),self.settings)
+        job=self.store.get(job_id)
+        self.assertEqual(job['status'],'review')
+        self.assertIn('Disk full',job['error'])
+        self.assertTrue(Path(job['snapshot']).exists())
+
+    def test_dismissed_jobs_stay_removed_after_restart_without_deleting_original(self):
+        job_id=self.enqueue()
+        job=self.store.get(job_id)
+        self.store.update(job_id,status='review')
+        self.assertEqual(self.store.dismiss([job_id]),[job_id])
+        self.assertEqual(self.store.jobs(pending_only=True),[])
+        self.assertTrue(self.source.exists())
+        self.assertFalse(Path(job['snapshot']).exists())
+        self.store.recover()
+        self.assertEqual(self.store.get(job_id)['status'],'dismissed')
+        restarted=FolderWatcher(ScanStore(self.root/'queue'))
+        restarted.poll(self.settings,now=0)
+        self.assertEqual(restarted.poll(self.settings,now=10)[0],[])
+
+    def test_dismissing_running_analysis_prevents_result_resurrection_or_auto_save(self):
+        job_id=self.enqueue()
+        self.settings.auto_save_scans=True
+        events=queue.Queue()
+        worker=ScanWorker(self.store,events,self.settings)
+        def analyze(page,*args,**kwargs):
+            self.analyze_clean(page)
+            self.assertEqual(self.store.dismiss([job_id]),[job_id])
+            return page
+        with patch('arar.scanning.analyze_page',side_effect=analyze) as analyzed:
+            worker.analyze(self.store.get(job_id),self.settings)
+        self.assertEqual(analyzed.call_count,1)
+        self.assertEqual(self.store.get(job_id)['status'],'dismissed')
+        self.assertNotIn('scan_ready',[event[0] for event in list(events.queue)])
+        self.assertFalse(Path(self.settings.archive_dir).exists())
+
+    def test_exporting_job_cannot_be_dismissed_or_started_by_another_worker(self):
+        job_id=self.enqueue()
+        job=self.store.get(job_id)
+        self.store.update(job_id,status='exporting')
+        self.assertEqual(self.store.dismiss([job_id]),[])
+        self.assertEqual(self.store.get(job_id)['status'],'exporting')
+        worker=ScanWorker(self.store,queue.Queue(),self.settings)
+        with patch('arar.scanning.analyze_page') as analyze:
+            worker.analyze(job,self.settings)
+        analyze.assert_not_called()
 
     def test_date_archive_is_collision_safe_and_export_commit_recovers_after_restart(self):
         job_id=self.enqueue()

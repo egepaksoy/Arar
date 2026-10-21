@@ -130,6 +130,10 @@ class DesktopTests(unittest.TestCase):
             option=next(widget for widget in self.descendants(scanning) if widget.winfo_class()=='TCheckbutton')
             self.assertFalse(option.instate(['selected']))
             option.invoke()
+            auto_save=next(widget for widget in self.descendants(scanning) if widget.winfo_class()=='TCheckbutton'
+                           and widget.cget('text')=='İnceleme gerekmeyen otomatik taramaları kaydet')
+            self.assertFalse(auto_save.instate(['selected']))
+            auto_save.invoke()
             choose=[widget for widget in self.descendants(scanning) if widget.winfo_class()=='TButton'
                     and widget.cget('text')=='Seç']
             with patch('arar.app.filedialog.askdirectory',side_effect=[str(canon),str(kodak),str(archive)]):
@@ -143,6 +147,7 @@ class DesktopTests(unittest.TestCase):
             self.root.update()
             loaded=Settings.load()
             self.assertTrue(loaded.auto_watch)
+            self.assertTrue(loaded.auto_save_scans)
             self.assertEqual((loaded.canon_input_dir,loaded.kodak_input_dir,loaded.archive_dir),
                              (str(canon),str(kodak),str(archive)))
             self.app.settings.auto_watch=False
@@ -181,6 +186,39 @@ class DesktopTests(unittest.TestCase):
         self.app.scan_combo.current(self.app.scan_ids.index(first))
         self.app.open_scan()
         self.assertEqual((self.app.pages[0].number,self.app.pages[0].decision),('USER','cover'))
+
+    def test_automatic_scan_completion_and_auto_save_never_open_completion_popups(self):
+        job_id=self._queued_scan()
+        self.app.settings.notify_analysis_done=True
+        with patch('arar.app.messagebox.showinfo') as info,patch('arar.app.messagebox.showwarning') as warning:
+            self.app.events.put(('scan_ready',job_id))
+            self.app.events.put(('scan_saved',job_id,self.temp.name,1))
+            self.pump_until(lambda:self.app.events.empty())
+        info.assert_not_called()
+        warning.assert_not_called()
+
+    def test_scan_list_removal_clears_active_review_and_preserves_source_files(self):
+        first=self._queued_scan()
+        second=self._queued_scan('second.pdf')
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.app.scan_combo.current(self.app.scan_ids.index(first))
+        self.app.open_scan()
+        self.root.update()
+        self.app.scan_combo.current(self.app.scan_ids.index(first))
+        self.app.scan_remove_btn.invoke()
+        self.assertEqual(self.app.scan_store.get(first)['status'],'dismissed')
+        self.assertEqual(self.app.pages,[])
+        self.assertIsNone(self.app.scan_job_id)
+        self.assertNotIn(first,self.app.scan_ids)
+        self.app.events.put(('scan_ready',first))
+        self.pump_until(lambda:self.app.events.empty())
+        self.assertFalse(self.app.scan_auto_open)
+        self.app.scan_clear_btn.invoke()
+        self.assertEqual(self.app.scan_store.get(second)['status'],'dismissed')
+        self.assertEqual(self.app.scan_ids,[])
+        for job in self.app.scan_store.jobs():
+            self.assertTrue(Path(job['original']).exists())
 
     def test_scan_is_archived_only_after_user_export_and_source_is_preserved(self):
         job_id=self._queued_scan()
@@ -247,6 +285,7 @@ class DesktopTests(unittest.TestCase):
             output_dir=self.temp.name,review_initial_mixed=False,review_initial_plain=False,
             review_later_mixed=True,review_later_plain=True)
         previous.faint_blue_as_blue=True
+        previous.auto_save_scans=True
         self.app.settings=previous
         with patch('arar.models.ROOT',Path(self.temp.name)):
             previous.save()

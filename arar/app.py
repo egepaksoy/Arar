@@ -132,12 +132,16 @@ class ArarApp:
 
         scans=tk.Frame(toolbar,bg=BG)
         scans.grid(row=2,column=0,columnspan=2,sticky='ew',pady=(12,0))
-        self.scan_combo=ttk.Combobox(scans,state='readonly',width=62)
+        self.scan_combo=ttk.Combobox(scans,state='readonly',width=42)
         self.scan_combo.pack(side='left')
         self.scan_open_btn=ttk.Button(scans,text='Taramayı incele',command=self.open_scan)
         self.scan_open_btn.pack(side='left',padx=8)
-        tk.Label(scans,textvariable=self.watch_var,font=('Segoe UI',9),fg=MUTED,bg=BG,
-                 wraplength=370,justify='left').pack(side='left',padx=8)
+        self.scan_remove_btn=ttk.Button(scans,text='Listeden kaldır',command=self.remove_scan)
+        self.scan_remove_btn.pack(side='left',padx=(0,8))
+        self.scan_clear_btn=ttk.Button(scans,text='Listeyi temizle',command=lambda:self.remove_scan(clear_all=True))
+        self.scan_clear_btn.pack(side='left')
+        tk.Label(toolbar,textvariable=self.watch_var,font=('Segoe UI',9),fg=MUTED,bg=BG,
+                 wraplength=1050,justify='left').grid(row=3,column=0,columnspan=2,sticky='w',pady=(4,0))
 
         stats=tk.Frame(self.root,bg=BG)
         stats.grid(row=1,column=0,sticky='ew',padx=24,pady=(0,16))
@@ -317,6 +321,8 @@ class ArarApp:
             for button in (self.add_btn,self.example_btn):
                 button.configure(state='disabled')
         self.scan_open_btn.configure(state=state)
+        self.scan_remove_btn.configure(state=state)
+        self.scan_clear_btn.configure(state=state)
         self.analyze_btn.configure(state='normal' if self.pages and not value else 'disabled')
         self.stop_btn.configure(state='normal' if value else 'disabled')
         self._refresh_summary()
@@ -493,6 +499,22 @@ class ArarApp:
                             (job['error'] or 'İnceleyip Onayla ve kaydet düğmesine basın.'))
         if self.pages and self.pages[0].first_page_error:
             messagebox.showerror('İlk sayfa kontrolü',self.pages[0].reason,parent=self.root)
+
+    def remove_scan(self,clear_all=False):
+        if self.busy:
+            return
+        if clear_all:
+            job_ids=[job['id'] for job in self.scan_store.jobs(pending_only=True,include_pages=False)]
+        else:
+            selected=self.scan_combo.current()
+            job_ids=[self.scan_ids[selected]] if 0<=selected<len(self.scan_ids) else []
+        removed=self.scan_store.dismiss(job_ids)
+        if self.scan_job_id in removed:
+            self.clear_files()
+        self.scan_auto_open=False
+        self._refresh_scan_queue()
+        self.status_var.set(f'{len(removed)} tarama listeden kaldırıldı. Kaynak PDF’ler ve arşiv dosyaları korundu.'
+                            if removed else 'Kaldırılacak tarama yok. Kayıt sürerken işlem listeden kaldırılamaz.')
 
     def _review_interaction(self,event=None):
         if self.operation=='analysis':
@@ -1031,6 +1053,8 @@ class ArarApp:
         self.label(scanning,'Yerel tarama klasörleri',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,12))
         auto_watch=tk.BooleanVar(value=self.settings.auto_watch)
         ttk.Checkbutton(scanning,text='Otomatik klasör izlemeyi aç',variable=auto_watch).pack(anchor='w',padx=20,pady=(0,8))
+        auto_save=tk.BooleanVar(value=self.settings.auto_save_scans)
+        ttk.Checkbutton(scanning,text='İnceleme gerekmeyen otomatik taramaları kaydet',variable=auto_save).pack(anchor='w',padx=20,pady=(0,8))
         canon_dir=tk.StringVar(value=self.settings.canon_input_dir)
         kodak_dir=tk.StringVar(value=self.settings.kodak_input_dir)
         archive_dir=tk.StringVar(value=self.settings.archive_dir)
@@ -1050,13 +1074,12 @@ class ArarApp:
             ttk.Button(row,text='Seç',command=lambda v=variable,t=title:choose_scan_folder(v,t)).pack(side='left',padx=(6,0))
             if variable is not archive_dir:
                 ttk.Button(row,text='Temizle',command=lambda v=variable:v.set('')).pack(side='left',padx=(6,0))
-        self.label(scanning,'Tarayıcı yazılımını renkli, çok sayfalı PDF’leri seçtiğiniz giriş klasörüne '
-                   'kaydetmek üzere ayarlayın. En az bir giriş klasörü yeterlidir. Alt klasörler izlenmez. '
-                   'İlk açılışta klasördeki mevcut PDF’ler de sıraya alınır.\n\n'
-                   'Uygulama açıkken yazımı tamamlanan PDF’ler otomatik analiz edilir. Sonuçlar '
-                   'Onayla ve kaydet düğmesine basana kadar arşivlenmez. Bekleyen işlemler ve sayfa '
-                   'kararları yeniden açılışta korunur. İzlemeyi kapatmak yeni dosya alımını durdurur; '
-                   'başlamış analiz tamamlanır. Giriş ve arşiv konumları ayrı, yerel klasörler olmalıdır.',
+        self.label(scanning,'Tarayıcı yazılımını renkli, çok sayfalı PDF’leri yerel giriş klasörüne kaydedecek '
+                   'şekilde ayarlayın. En az bir giriş yeterlidir; alt klasörler izlenmez. Mevcut PDF’ler de alınır.\n\n'
+                   'Otomatik kayıt açıkken yeni analizi tamamlanan ve tüm sayfaları belgeye atanmış taramalar '
+                   'arşivlenir. İnceleme, hata veya eksik sayfa varsa onayınız beklenir. Kapalıyken tüm kayıtlar '
+                   'Onayla ve kaydet düğmesiyle yapılır. Sonuçlar popup açmadan listede görünür. '
+                   'Bekleyen kararlar yeniden açılışta korunur. Giriş ve arşiv klasörleri ayrı olmalıdır.',
                    size=9,color=MUTED,justify='left',wraplength=555).pack(anchor='w',padx=20,pady=14)
 
         def save():
@@ -1077,7 +1100,7 @@ class ArarApp:
                     review_initial_mixed=initial_mixed.get(),review_initial_plain=initial_plain.get(),
                     review_later_mixed=later_mixed.get(),review_later_plain=later_plain.get(),
                     examples_dir=examples_dir.get(),output_dir=output_dir.get(),
-                    auto_watch=auto_watch.get(),canon_input_dir=canon_dir.get(),
+                    auto_watch=auto_watch.get(),auto_save_scans=auto_save.get(),canon_input_dir=canon_dir.get(),
                     kodak_input_dir=kodak_dir.get(),archive_dir=archive_dir.get())
                 updated.save()
             except (OSError,ValueError) as exc:
@@ -1099,6 +1122,7 @@ class ArarApp:
                 (stamp_value,defaults.stamp_threshold),(scan_value,defaults.scan_stamp_threshold),
                 (examples_dir,defaults.examples_dir),(output_dir,defaults.output_dir),
                 (auto_watch,defaults.auto_watch),(canon_dir,defaults.canon_input_dir),
+                (auto_save,defaults.auto_save_scans),
                 (kodak_dir,defaults.kodak_input_dir),(archive_dir,defaults.archive_dir),
             ):
                 variable.set(value)
@@ -1123,14 +1147,13 @@ class ArarApp:
                     self.watch_error=event[1]
                 elif kind=='scan_ready':
                     self._refresh_scan_queue()
-                    if not self.pages:
-                        self.scan_auto_open=True
                     job=self.scan_store.get(event[1])
-                    if job and self.settings.notify_analysis_done and not self.root.grab_current():
-                        pages=decode_pages(job['pages'])
-                        if job['status']=='review' and pages and not any(page.state=='pending' for page in pages) and not pages[0].first_page_error:
-                            messagebox.showinfo('Tarama bitti',Path(job['original']).name+
-                                '\n\nAnaliz sonucu tarama kuyruğunda onayınızı bekliyor.',parent=self.root)
+                    if job and job['status'] in ('review','error') and not self.pages:
+                        self.scan_auto_open=True
+                elif kind=='scan_saved':
+                    self._refresh_scan_queue()
+                    if not self.pages and not self.busy:
+                        self.status_var.set(f'{event[3]} PDF otomatik arşivlendi: '+event[2])
                 elif kind=='archived':
                     self._set_busy(False)
                     paths,job_id=event[1:]
@@ -1177,7 +1200,7 @@ class ArarApp:
                     if review is not None and not self.review_during_analysis:
                         self.page_tree.selection_set(str(review))
                         self.page_tree.see(str(review))
-                    if not event[1] and self.settings.notify_analysis_done:
+                    if not event[1] and self.settings.notify_analysis_done and not self.scan_job_id:
                         count=sum(p.effective_state=='review' for p in self.pages)
                         messagebox.showinfo('Tarama bitti',
                             f'{len(self.pages)} PDF sayfasının barkod ve mühür analizi tamamlandı.\n\n'

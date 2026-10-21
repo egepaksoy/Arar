@@ -15,6 +15,7 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - İşlenen sayfalarda yeşil tik, kullanıcı incelemesi gerekenlerde kırmızı işaret.
 - Sırayla gruplama veya art arda kapaklara ortak devam sayfalarını ekleme.
 - Canon/Kodak yerel PDF klasörlerini izleme, otomatik analiz ve kalıcı onay sırası.
+- İnceleme gerekmeyen otomatik taramaları ayara bağlı arşivleme, tarama listesinden tek tek veya topluca kaldırma.
 - Kapak işaretleme onay sorusunu ayarlardan açma veya kapatma.
 - PDF analizi tamamlandığında ayarlardan açılıp kapatılabilen “Tarama bitti” bildirimi.
 - Barkod adıyla PDF kaydı, çakışan isimlere numara ekleme ve JSON işlem raporu.
@@ -87,11 +88,27 @@ sayfalarını veya kararlarını değiştirmez. Üstteki tarama listesinden **Ta
 ile onay bekleyen bir işlemi açın. İlk uygun işlem, çalışma alanı boşsa otomatik açılır.
 Elle eklenmiş PDF’ler varsa önce o çalışma alanını kaydedin veya temizleyin.
 Otomatik işlem açıkken başka kaynak ekleme kapalıdır; **Dosyaları temizle** incelemeyi
-kapatır, işlemi ve kararlarını tarama sırasından silmez.
+kapatır, işlemi ve kararlarını tarama sırasından silmez. Otomatik analiz tamamlanınca
+popup açılmaz; durum tarama listesinde gösterilir.
 
-**Onayla ve kaydet** düğmesi kullanıcı onayıdır; öncesinde çıktı PDF’leri arşivlenmez.
-Kararsız veya bir belgeye bağlanmamış sayfalar varsa kayıt kapalıdır.
-Her kaynak PDF için, onay zamanına göre ayrı bir işlem klasörü oluşur:
+**Listeden kaldır** seçili otomatik taramayı, **Listeyi temizle** listedeki işlemleri
+kaldırır. Analizi tamamlanmış ve onay bekleyen dosyalar da kaldırılabilir. Açık işlem
+kaldırılırsa inceleme alanı kapanır. Devam eden analiz kaldırıldığında sonucu geri
+eklenmez; o işlem otomatik kaydedilmez. Arşive kayıt başlamışsa o kayıt bitene kadar
+listeden kaldırılamaz. Kaynak PDF’ler ve mevcut arşiv çıktıları silinmez. Kaldırılan
+aynı dosya yeniden açılışta tekrar sıraya alınmaz; gerekirse **PDF ekle** ile elle açın.
+
+**Ayarlar → Otomatik tarama → İnceleme gerekmeyen otomatik taramaları kaydet**
+varsayılan olarak kapalıdır. Açıldığında yeni tamamlanan otomatik analizde tüm sayfalar
+işlenmiş ve belgelere atanmışsa sonuç otomatik arşivlenir. İnceleme, hata, kapaksız
+sayfa veya işlenmemiş sayfa varsa otomatik kayıt yapılmaz; işlem onayınızı bekler.
+Kayıt hatası da inceleme sırasında gösterilir; tekrar tekrar otomatik denenmez.
+Önceden onay bekleyen işler ve elle başlatılan analizler bu seçenekle geriye dönük
+kaydedilmez. Değişiklik sonraki otomatik analizler için geçerlidir.
+
+Otomatik kayıt kapalıyken **Onayla ve kaydet** düğmesi kullanıcı onayıdır; öncesinde
+çıktılar arşivlenmez. Kararsız veya bir belgeye bağlanmamış sayfalar varsa kayıt kapalıdır.
+Her kaynak PDF için, kayıt zamanına göre ayrı bir işlem klasörü oluşur:
 
 ```text
 Arşiv/
@@ -106,7 +123,8 @@ Arşiv/
 
 Elle eklenen kaynaklarda cihaz etiketi `Manuel` olur. Aynı saniyede aynı etiketle
 kayıt yapılırsa `_002`, `_003` ile devam edilir; mevcut dosyaların üzerine yazılmaz.
-İşlem raporu sayfa gruplarını, onay kaydı kaynak PDF’yi ve kaydedilen dosyaları içerir.
+İşlem raporu sayfa gruplarını, onay kaydı kaynak PDF’yi, kaydedilen dosyaları ve
+kayıt türünün otomatik mi kullanıcı onayı mı olduğunu içerir.
 
 Tarama geçmişi, çalışma kopyaları ve onay bekleyen sayfa kararları `.arar/scans/`
 altında yerel olarak tutulur. Uygulama yeniden açıldığında bekleyen işlemler geri gelir;
@@ -185,8 +203,9 @@ manuel kapak işaretleme onay sorusu gösterilmez. Seçiminiz sonraki açılış
 kapak numarası girme gerekliliği devam eder.
 
 **Ayarlar → İşlem ayarları → Tamamlanma bildirimi → Tarama bittiğinde uyarı göster** seçeneği
-varsayılan olarak açıktır. PDF sayfalarının analizi tamamlandığında bildirim gösterir;
-durdurulan analizde gösterilmez. Seçiminiz kaydedilir.
+varsayılan olarak açıktır. Elle eklenen PDF’lerde başlatılan analiz tamamlandığında
+bildirim gösterir; durdurulan analizde veya otomatik tarama sırasındaki işlerde
+gösterilmez. Otomatik kayıt sonunda da popup açılmaz. Seçiminiz kaydedilir.
 
 Çevrimdışı kullanım ve sorun giderme: [README_OFFLINE.md](README_OFFLINE.md).
 

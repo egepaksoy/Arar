@@ -25,6 +25,7 @@ class Settings:
     review_later_plain: bool = False
     examples_dir: str = ''
     auto_watch: bool = False
+    auto_save_scans: bool = False
     canon_input_dir: str = ''
     kodak_input_dir: str = ''
     archive_dir: str = str(ROOT / 'Arşiv')
@@ -48,6 +49,7 @@ class Settings:
             settings.review_missing_stamp = bool(settings.review_missing_stamp)
             settings.faint_blue_as_blue = bool(settings.faint_blue_as_blue)
             settings.auto_watch = bool(settings.auto_watch)
+            settings.auto_save_scans = bool(settings.auto_save_scans)
             settings.validate_scan_paths()
             for name in ('review_initial_mixed','review_initial_plain','review_later_mixed','review_later_plain'):
                 setattr(settings,name,bool(getattr(settings,name)))
