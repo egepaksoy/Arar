@@ -26,14 +26,20 @@ class Settings:
     examples_dir: str = ''
     auto_watch: bool = False
     auto_save_scans: bool = False
-    canon_input_dir: str = ''
-    kodak_input_dir: str = ''
+    input_dirs: list[str] = field(default_factory=list)
     archive_dir: str = str(ROOT / 'Arşiv')
 
     @classmethod
     def load(cls):
         try:
             data = json.loads((ROOT / '.arar' / 'settings.json').read_text(encoding='utf-8'))
+            if 'input_dirs' not in data:
+                # Preserve old installations' folder order without device names.
+                data['input_dirs']=[]
+                for key in ('canon_input_dir','kodak_input_dir'):
+                    value=data.get(key)
+                    if value and str(local_path(value)) not in data['input_dirs']:
+                        data['input_dirs'].append(str(local_path(value)))
             settings = cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
             # The updated rules share following documents between adjacent
             # blue covers. Migrate old preferences once; later choices persist.
@@ -86,18 +92,17 @@ class Settings:
         if not isinstance(self.archive_dir,str) or not self.archive_dir.strip():
             raise ValueError('Ana arşiv klasörü seçin.')
         archive=local_path(self.archive_dir)
+        if not isinstance(self.input_dirs,list) or any(not isinstance(value,str) or not value.strip() for value in self.input_dirs):
+            raise ValueError('Giriş klasörleri geçerli bir klasör listesi olmalıdır.')
         inputs=[]
-        for name in ('canon_input_dir','kodak_input_dir'):
-            value=getattr(self,name)
-            if not value:
-                continue
+        for value in self.input_dirs:
             folder=local_path(value)
             if folder.exists() and not folder.is_dir():
                 raise ValueError('Giriş konumu bir klasör olmalıdır.')
             if archive==folder or archive.is_relative_to(folder) or folder.is_relative_to(archive):
                 raise ValueError('Giriş ve arşiv klasörleri ayrı konumlarda olmalıdır.')
             if folder in inputs:
-                raise ValueError('Canon ve Kodak için farklı giriş klasörleri seçin.')
+                raise ValueError('Aynı giriş klasörü birden fazla kez eklenemez.')
             inputs.append(folder)
         if self.auto_watch and not inputs:
             raise ValueError('Otomatik izleme için en az bir giriş klasörü seçin.')

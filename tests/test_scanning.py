@@ -17,9 +17,9 @@ class ScanTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.root=Path(self.temp.name)
-        self.incoming=self.root/'Canon'
+        self.incoming=self.root/'incoming'
         self.incoming.mkdir()
-        self.settings=Settings(auto_watch=True,canon_input_dir=str(self.incoming),
+        self.settings=Settings(auto_watch=True,input_dirs=[str(self.incoming)],
                                archive_dir=str(self.root/'archive'))
         self.store=ScanStore(self.root/'queue')
         self.watcher=FolderWatcher(self.store,stable_seconds=3)
@@ -35,7 +35,7 @@ class ScanTests(unittest.TestCase):
 
     def enqueue(self):
         stat=self.source.stat()
-        return self.store.enqueue(self.source,'Canon',(stat.st_size,stat.st_mtime_ns))
+        return self.store.enqueue(self.source,'Tarama_1',(stat.st_size,stat.st_mtime_ns))
 
     def test_file_stability_disabled_switch_and_persistent_duplicate_detection(self):
         self.assertEqual(self.watcher.poll(self.settings,now=0)[0],[])
@@ -208,11 +208,11 @@ class ScanTests(unittest.TestCase):
         pages[1].state='attachment'
         groups,_=build_groups(pages)
         now=datetime(2026,10,21,14,32,8)
-        first=reserve_archive(self.settings.archive_dir,'Canon',now)
-        second=reserve_archive(self.settings.archive_dir,'Canon',now)
+        first=reserve_archive(self.settings.archive_dir,'Tarama_1',now)
+        second=reserve_archive(self.settings.archive_dir,'Tarama_1',now)
         self.assertEqual(first.parent.name,'2026-10-21')
-        self.assertEqual(first.name,'14-32-08_Canon_001')
-        self.assertEqual(second.name,'14-32-08_Canon_002')
+        self.assertEqual(first.name,'14-32-08_Tarama_1_001')
+        self.assertEqual(second.name,'14-32-08_Tarama_1_002')
         self.store.update(job_id,status='exporting',archive=str(first),pages=encode_pages(pages))
         paths=write_archive(groups,first,job_id,str(self.source))
         self.assertEqual(len(PdfReader(paths[0]).pages),2)
@@ -242,21 +242,67 @@ class ScanTests(unittest.TestCase):
         pages[1].state='attachment'
         pages[1].index=999
         groups,_=build_groups(pages)
-        folder=reserve_archive(self.settings.archive_dir,'Canon')
+        folder=reserve_archive(self.settings.archive_dir,'Tarama_1')
         with self.assertRaises(IndexError):
             write_archive(groups,folder,job_id)
         self.assertEqual(list(folder.iterdir()),[])
         self.assertFalse(archive_committed(folder,job_id))
 
     def test_configuration_rejects_network_overlapping_and_missing_inputs(self):
-        for fields in ({'canon_input_dir':r'\\server\share'},
+        for fields in ({'input_dirs':[r'\\server\share']},
                        {'archive_dir':str(self.incoming/'archive')},
-                       {'kodak_input_dir':str(self.incoming)},
-                       {'canon_input_dir':''}):
+                       {'input_dirs':[str(self.incoming),str(self.incoming)]},
+                       {'input_dirs':[]}, {'input_dirs':'not a list'}, {'input_dirs':['']}):
             with self.subTest(fields=fields):
                 from dataclasses import replace
                 with self.assertRaises(ValueError):
                     replace(self.settings,**fields).validate_scan_paths()
+
+    def test_multiple_input_folders_are_numbered_and_all_are_watched(self):
+        folders=[self.incoming]
+        for index in range(2,5):
+            folder=self.root/f'incoming{index}'
+            folder.mkdir()
+            (folder/'scan.pdf').write_bytes(self.source.read_bytes())
+            folders.append(folder)
+        self.settings.input_dirs=[str(folder) for folder in folders]
+        self.watcher.poll(self.settings,now=0)
+        added,errors=self.watcher.poll(self.settings,now=4)
+        self.assertEqual(len(added),4)
+        self.assertFalse(errors)
+        self.assertEqual([job['label'] for job in self.store.jobs()],['Tarama_1','Tarama_2','Tarama_3','Tarama_4'])
+
+    def test_old_settings_and_pending_jobs_migrate_without_losing_folders(self):
+        import json
+        folder=self.root/'legacy'
+        directory=folder/'.arar'
+        directory.mkdir(parents=True)
+        other=self.root/'second'
+        other.mkdir()
+        old={'canon_input_dir':str(self.incoming),'kodak_input_dir':str(other),
+             'auto_watch':True,'archive_dir':self.settings.archive_dir,'auto_save_scans':True}
+        (directory/'settings.json').write_text(json.dumps(old),encoding='utf-8')
+        with patch('arar.models.ROOT',folder):
+            settings=Settings.load()
+            self.assertEqual(settings.input_dirs,[str(self.incoming),str(other)])
+            self.assertTrue(settings.auto_save_scans)
+            settings.save()
+            saved=json.loads((directory/'settings.json').read_text(encoding='utf-8'))
+            self.assertNotIn('canon_input_dir',saved)
+            self.assertEqual(Settings.load().input_dirs,settings.input_dirs)
+        stat=self.source.stat()
+        job_id=self.store.enqueue(self.source,'Canon',(stat.st_size,stat.st_mtime_ns))
+        self.store.migrate_input_labels(settings)
+        self.assertEqual(self.store.get(job_id)['label'],'Tarama_1')
+
+    def test_new_empty_list_does_not_restore_old_legacy_folders(self):
+        import json
+        directory=self.root/'.arar'
+        directory.mkdir()
+        (directory/'settings.json').write_text(json.dumps({'input_dirs':[],
+            'canon_input_dir':str(self.incoming),'archive_dir':self.settings.archive_dir}),encoding='utf-8')
+        with patch('arar.models.ROOT',self.root):
+            self.assertEqual(Settings.load().input_dirs,[])
 
 
 if __name__=='__main__':

@@ -39,6 +39,7 @@ class ArarApp:
         self.events=queue.Queue()
         self.scan_store=ScanStore()
         self.scan_store.recover()
+        self.scan_store.migrate_input_labels(self.settings)
         self.scan_worker=ScanWorker(self.scan_store,self.events,replace(self.settings))
         self.scan_job_id=None
         self.scan_ids=[]
@@ -934,13 +935,16 @@ class ArarApp:
             return
         dialog=tk.Toplevel(self.root)
         dialog.title('Arar • Ayarlar')
-        dialog.geometry('640x650')
-        dialog.resizable(False,False)
+        dialog.geometry('640x700')
+        dialog.minsize(640,650)
+        dialog.resizable(True,True)
         dialog.configure(bg=WHITE)
+        dialog.grid_columnconfigure(0,weight=1)
+        dialog.grid_rowconfigure(0,weight=1)
         dialog.transient(self.root)
         dialog.grab_set()
         tabs=ttk.Notebook(dialog)
-        tabs.pack(fill='both',expand=True,padx=16,pady=(16,0))
+        tabs.grid(row=0,column=0,sticky='nsew',padx=20,pady=(16,0))
         general=tk.Frame(tabs,bg=WHITE)
         accuracy=tk.Frame(tabs,bg=WHITE)
         decisions=tk.Frame(tabs,bg=WHITE)
@@ -1055,8 +1059,7 @@ class ArarApp:
         ttk.Checkbutton(scanning,text='Otomatik klasör izlemeyi aç',variable=auto_watch).pack(anchor='w',padx=20,pady=(0,8))
         auto_save=tk.BooleanVar(value=self.settings.auto_save_scans)
         ttk.Checkbutton(scanning,text='İnceleme gerekmeyen otomatik taramaları kaydet',variable=auto_save).pack(anchor='w',padx=20,pady=(0,8))
-        canon_dir=tk.StringVar(value=self.settings.canon_input_dir)
-        kodak_dir=tk.StringVar(value=self.settings.kodak_input_dir)
+        input_dirs=list(self.settings.input_dirs)
         archive_dir=tk.StringVar(value=self.settings.archive_dir)
         def choose_scan_folder(variable,title):
             chosen=filedialog.askdirectory(title=title,parent=dialog)
@@ -1065,22 +1068,66 @@ class ArarApp:
                     variable.set(str(local_path(chosen,must_exist=True)))
                 except (ValueError,OSError) as exc:
                     messagebox.showerror('Yerel klasör gerekli',str(exc),parent=dialog)
-        for title,variable in (('Canon giriş klasörü',canon_dir),('Kodak giriş klasörü',kodak_dir),
-                               ('Ana arşiv klasörü',archive_dir)):
-            self.label(scanning,title,bold=True).pack(anchor='w',padx=20,pady=(12,4))
-            row=tk.Frame(scanning,bg=WHITE)
-            row.pack(fill='x',padx=20)
-            ttk.Entry(row,textvariable=variable,state='readonly').pack(side='left',fill='x',expand=True)
-            ttk.Button(row,text='Seç',command=lambda v=variable,t=title:choose_scan_folder(v,t)).pack(side='left',padx=(6,0))
-            if variable is not archive_dir:
-                ttk.Button(row,text='Temizle',command=lambda v=variable:v.set('')).pack(side='left',padx=(6,0))
-        self.label(scanning,'Tarayıcı yazılımını renkli, çok sayfalı PDF’leri yerel giriş klasörüne kaydedecek '
-                   'şekilde ayarlayın. En az bir giriş yeterlidir; alt klasörler izlenmez. Mevcut PDF’ler de alınır.\n\n'
-                   'Otomatik kayıt açıkken yeni analizi tamamlanan ve tüm sayfaları belgeye atanmış taramalar '
-                   'arşivlenir. İnceleme, hata veya eksik sayfa varsa onayınız beklenir. Kapalıyken tüm kayıtlar '
-                   'Onayla ve kaydet düğmesiyle yapılır. Sonuçlar popup açmadan listede görünür. '
-                   'Bekleyen kararlar yeniden açılışta korunur. Giriş ve arşiv klasörleri ayrı olmalıdır.',
-                   size=9,color=MUTED,justify='left',wraplength=555).pack(anchor='w',padx=20,pady=14)
+        self.label(scanning,'Giriş klasörleri',bold=True).pack(anchor='w',padx=20,pady=(6,4))
+        folder_frame=tk.Frame(scanning,bg=WHITE)
+        folder_frame.pack(fill='x',padx=20)
+        folder_tree=ttk.Treeview(folder_frame,columns=('number','path'),show='headings',height=3,selectmode='extended')
+        folder_tree.heading('number',text='No')
+        folder_tree.heading('path',text='Klasör konumu')
+        folder_tree.column('number',width=42,stretch=False,anchor='center')
+        folder_tree.column('path',width=455,minwidth=100)
+        folder_tree.pack(side='left',fill='x',expand=True)
+        folder_scroll=ttk.Scrollbar(folder_frame,orient='vertical',command=folder_tree.yview)
+        folder_scroll.pack(side='right',fill='y')
+        folder_tree.configure(yscrollcommand=folder_scroll.set)
+        def refresh_input_dirs():
+            folder_tree.delete(*folder_tree.get_children())
+            for index,value in enumerate(input_dirs):
+                folder_tree.insert('','end',iid=str(index),values=(f'{index+1}.',value))
+        def edit_input_dir(change=False):
+            selection=folder_tree.selection()
+            if change and len(selection)!=1:
+                return
+            chosen=filedialog.askdirectory(title='Yerel giriş klasörünü seçin',parent=dialog)
+            if not chosen:
+                return
+            try:
+                folder=local_path(chosen,must_exist=True)
+                index=int(selection[0]) if change else len(input_dirs)
+                if any(local_path(value)==folder for i,value in enumerate(input_dirs) if i!=index):
+                    raise ValueError('Bu klasör zaten listede.')
+                if not folder.is_dir():
+                    raise ValueError('Seçilen konum bir klasör değil.')
+                if change:
+                    input_dirs[index]=str(folder)
+                else:
+                    input_dirs.append(str(folder))
+                refresh_input_dirs()
+                folder_tree.selection_set(str(index))
+                folder_tree.see(str(index))
+            except (ValueError,OSError) as exc:
+                messagebox.showerror('Giriş klasörü eklenemedi',str(exc),parent=dialog)
+        def remove_input_dirs():
+            for index in sorted((int(item) for item in folder_tree.selection()),reverse=True):
+                del input_dirs[index]
+            refresh_input_dirs()
+        refresh_input_dirs()
+        folder_actions=tk.Frame(scanning,bg=WHITE)
+        folder_actions.pack(anchor='w',padx=20,pady=6)
+        ttk.Button(folder_actions,text='Klasör ekle',command=edit_input_dir).pack(side='left')
+        ttk.Button(folder_actions,text='Değiştir',command=lambda:edit_input_dir(True)).pack(side='left',padx=6)
+        ttk.Button(folder_actions,text='Seçileni kaldır',command=remove_input_dirs).pack(side='left')
+        self.label(scanning,'Ana arşiv klasörü',bold=True).pack(anchor='w',padx=20,pady=(6,4))
+        row=tk.Frame(scanning,bg=WHITE)
+        row.pack(fill='x',padx=20)
+        ttk.Entry(row,textvariable=archive_dir,state='readonly').pack(side='left',fill='x',expand=True)
+        ttk.Button(row,text='Seç',command=lambda:choose_scan_folder(archive_dir,'Ana arşiv klasörü')).pack(side='left',padx=(6,0))
+        self.label(scanning,'İstediğiniz kadar yerel giriş klasörü ekleyin. Numara sırasına göre Tarama_1, '
+                   'Tarama_2… olarak izlenir ve arşivlenir. Alt klasörler izlenmez; mevcut PDF’ler de alınır. '
+                   'Tarayıcı renkli, çok sayfalı PDF kaydetmelidir.\n\n'
+                   'Otomatik kayıt yalnızca tüm sayfalar işlenip belgelere atandığında yapılır; diğerleri '
+                   'onayınızı bekler. Giriş ve arşiv klasörleri ayrı olmalıdır.',
+                   size=9,color=MUTED,justify='left',wraplength=555).pack(anchor='w',padx=20,pady=10)
 
         def save():
             try:
@@ -1100,8 +1147,8 @@ class ArarApp:
                     review_initial_mixed=initial_mixed.get(),review_initial_plain=initial_plain.get(),
                     review_later_mixed=later_mixed.get(),review_later_plain=later_plain.get(),
                     examples_dir=examples_dir.get(),output_dir=output_dir.get(),
-                    auto_watch=auto_watch.get(),auto_save_scans=auto_save.get(),canon_input_dir=canon_dir.get(),
-                    kodak_input_dir=kodak_dir.get(),archive_dir=archive_dir.get())
+                    auto_watch=auto_watch.get(),auto_save_scans=auto_save.get(),input_dirs=list(input_dirs),
+                    archive_dir=archive_dir.get())
                 updated.save()
             except (OSError,ValueError) as exc:
                 messagebox.showerror('Ayarlar kaydedilemedi',str(exc),parent=dialog)
@@ -1112,6 +1159,8 @@ class ArarApp:
             self.status_var.set('Ayarlar kaydedildi.')
         def restore_defaults():
             defaults=Settings()
+            input_dirs.clear()
+            refresh_input_dirs()
             for variable,value in (
                 (grouping,defaults.grouping),
                 (review_others,defaults.review_other_barcodes),(confirm_cover,defaults.confirm_cover),
@@ -1121,17 +1170,24 @@ class ArarApp:
                 (later_mixed,defaults.review_later_mixed),(later_plain,defaults.review_later_plain),
                 (stamp_value,defaults.stamp_threshold),(scan_value,defaults.scan_stamp_threshold),
                 (examples_dir,defaults.examples_dir),(output_dir,defaults.output_dir),
-                (auto_watch,defaults.auto_watch),(canon_dir,defaults.canon_input_dir),
+                (auto_watch,defaults.auto_watch),
                 (auto_save,defaults.auto_save_scans),
-                (kodak_dir,defaults.kodak_input_dir),(archive_dir,defaults.archive_dir),
+                (archive_dir,defaults.archive_dir),
             ):
                 variable.set(value)
         actions=tk.Frame(dialog,bg=WHITE)
-        actions.pack(fill='x',padx=20,pady=(8,12))
+        actions.grid(row=1,column=0,sticky='ew',padx=20,pady=(14,18))
+        actions.grid_columnconfigure(0,weight=1)
+        actions.grid_columnconfigure(1,weight=1)
         self.label(actions,'Varsayılanlar ekrana uygulanır. Kalıcı olması için ayarları kaydedin.',
-                   size=9,color=MUTED).pack(anchor='w',pady=(0,6))
-        ttk.Button(actions,text='Varsayılana dön',command=restore_defaults).pack(side='left')
-        ttk.Button(actions,text='Ayarları kaydet',style='Primary.TButton',command=save).pack(side='right')
+                   size=9,color=MUTED,wraplength=560,justify='left').grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,10))
+        style=ttk.Style(dialog)
+        style.configure('Settings.TButton',font=('Segoe UI',10),padding=(20,12))
+        style.configure('Settings.Primary.TButton',font=('Segoe UI',10,'bold'),padding=(20,12))
+        ttk.Button(actions,text='Varsayılana dön',style='Settings.TButton',width=18,
+                   command=restore_defaults).grid(row=1,column=0,sticky='w')
+        ttk.Button(actions,text='Ayarları kaydet',style='Settings.Primary.TButton',width=18,
+                   command=save).grid(row=1,column=1,sticky='e')
 
     def _poll(self):
         self.poll_after=None

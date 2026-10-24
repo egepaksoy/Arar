@@ -114,10 +114,9 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual((loaded.stamp_threshold,loaded.scan_stamp_threshold),(78,68))
 
     def test_scan_settings_are_saved_and_fit_in_dialog(self):
-        canon=Path(self.temp.name)/'Canon'
-        kodak=Path(self.temp.name)/'Kodak'
+        folders=[Path(self.temp.name)/f'input{index}' for index in range(1,4)]
         archive=Path(self.temp.name)/'archive'
-        for folder in (canon,kodak,archive):
+        for folder in (*folders,archive):
             folder.mkdir()
         with patch('arar.models.ROOT',Path(self.temp.name)):
             self.app.show_settings()
@@ -134,11 +133,14 @@ class DesktopTests(unittest.TestCase):
                            and widget.cget('text')=='İnceleme gerekmeyen otomatik taramaları kaydet')
             self.assertFalse(auto_save.instate(['selected']))
             auto_save.invoke()
-            choose=[widget for widget in self.descendants(scanning) if widget.winfo_class()=='TButton'
-                    and widget.cget('text')=='Seç']
-            with patch('arar.app.filedialog.askdirectory',side_effect=[str(canon),str(kodak),str(archive)]):
-                for button in choose:
-                    button.invoke()
+            add=next(widget for widget in self.descendants(scanning) if widget.winfo_class()=='TButton'
+                     and widget.cget('text')=='Klasör ekle')
+            choose=next(widget for widget in self.descendants(scanning) if widget.winfo_class()=='TButton'
+                        and widget.cget('text')=='Seç')
+            with patch('arar.app.filedialog.askdirectory',side_effect=[str(folder) for folder in (*folders,archive)]):
+                for _ in folders:
+                    add.invoke()
+                choose.invoke()
             for widget in scanning.winfo_children():
                 self.assertLessEqual(widget.winfo_y()+widget.winfo_reqheight(),scanning.winfo_height())
             save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
@@ -148,15 +150,15 @@ class DesktopTests(unittest.TestCase):
             loaded=Settings.load()
             self.assertTrue(loaded.auto_watch)
             self.assertTrue(loaded.auto_save_scans)
-            self.assertEqual((loaded.canon_input_dir,loaded.kodak_input_dir,loaded.archive_dir),
-                             (str(canon),str(kodak),str(archive)))
+            self.assertEqual(loaded.input_dirs,[str(folder) for folder in folders])
+            self.assertEqual(loaded.archive_dir,str(archive))
             self.app.settings.auto_watch=False
 
     def _queued_scan(self,name='scan.pdf'):
         source=Path(self.temp.name)/name
         source.write_bytes(self.source.read_bytes())
         stat=source.stat()
-        job_id=self.app.scan_store.enqueue(source,'Canon',(stat.st_size,stat.st_mtime_ns))
+        job_id=self.app.scan_store.enqueue(source,'Tarama_1',(stat.st_size,stat.st_mtime_ns))
         job=next(job for job in self.app.scan_store.jobs() if job['id']==job_id)
         from arar.scanning import decode_pages
         pages=decode_pages(job['pages'])
@@ -165,6 +167,36 @@ class DesktopTests(unittest.TestCase):
         pages[1].state='attachment'
         self.app.scan_store.update(job_id,status='review',pages=encode_pages(pages))
         return job_id
+
+    def test_input_folder_list_can_be_edited_removed_and_renumbered(self):
+        folders=[Path(self.temp.name)/f'folder{i}' for i in range(4)]
+        for folder in folders:
+            folder.mkdir()
+        self.app.settings.input_dirs=[str(folder) for folder in folders[:3]]
+        with patch('arar.models.ROOT',Path(self.temp.name)):
+            self.app.show_settings()
+            self.root.update()
+            dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+            tabs=next(widget for widget in dialog.winfo_children() if widget.winfo_class()=='TNotebook')
+            scanning=dialog.nametowidget(tabs.tabs()[4])
+            tree=next(widget for widget in self.descendants(scanning) if widget.winfo_class()=='Treeview')
+            def button(text):
+                return next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                            and widget.cget('text')==text)
+            tree.selection_set('1')
+            button('Seçileni kaldır').invoke()
+            self.assertEqual([tree.item(item,'values')[0] for item in tree.get_children()],['1.','2.'])
+            tree.selection_set('1')
+            with patch('arar.app.filedialog.askdirectory',return_value=str(folders[3])):
+                button('Değiştir').invoke()
+            with patch('arar.app.filedialog.askdirectory',return_value=str(folders[0])), \
+                    patch('arar.app.messagebox.showerror') as error:
+                button('Klasör ekle').invoke()
+            error.assert_called_once()
+            self.assertEqual(len(tree.get_children()),2)
+            button('Ayarları kaydet').invoke()
+            self.root.update()
+            self.assertEqual(Settings.load().input_dirs,[str(folders[0]),str(folders[3])])
 
     def test_incoming_scan_does_not_replace_review_and_manual_decisions_are_persistent(self):
         first=self._queued_scan()
@@ -244,7 +276,7 @@ class DesktopTests(unittest.TestCase):
         incoming.mkdir()
         (incoming/'new.pdf').write_bytes(self.source.read_bytes())
         self.app.settings.auto_watch=True
-        self.app.settings.canon_input_dir=str(incoming)
+        self.app.settings.input_dirs=[str(incoming)]
         self.app.settings.archive_dir=str(Path(self.temp.name)/'archive')
         self.app.scan_worker.watcher.stable_seconds=0
         original_pages=list(self.app.pages)

@@ -14,7 +14,7 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - **Analiz sürerken tamamlanan sayfaları inceleme ve kullanıcı kararı verme.** Arka plandaki sonuçlar manuel kararları değiştirmez.
 - İşlenen sayfalarda yeşil tik, kullanıcı incelemesi gerekenlerde kırmızı işaret.
 - Sırayla gruplama veya art arda kapaklara ortak devam sayfalarını ekleme.
-- Canon/Kodak yerel PDF klasörlerini izleme, otomatik analiz ve kalıcı onay sırası.
+- Eklenip kaldırılabilen birden fazla yerel PDF klasörünü izleme, otomatik analiz ve kalıcı onay sırası.
 - İnceleme gerekmeyen otomatik taramaları ayara bağlı arşivleme, tarama listesinden tek tek veya topluca kaldırma.
 - Kapak işaretleme onay sorusunu ayarlardan açma veya kapatma.
 - PDF analizi tamamlandığında ayarlardan açılıp kapatılabilen “Tarama bitti” bildirimi.
@@ -65,11 +65,22 @@ Hazırlama, taşıma ve Python uyumluluğu: [README_OFFLINE.md](README_OFFLINE.m
 
 ## Otomatik tarama ve arşiv
 
-**Ayarlar → Otomatik tarama** bölümünden **Canon giriş klasörü**, **Kodak giriş
-klasörü** ve **Ana arşiv klasörü** seçin. En az bir giriş klasörü yeterlidir.
+**Ayarlar → Otomatik tarama → Giriş klasörleri** bölümünde **Klasör ekle** ile
+istediğiniz sayıda yerel klasör ekleyin. Liste **1., 2., 3. …** olarak numaralanır;
+**Değiştir** seçili klasörün konumunu değiştirir, **Seçileni kaldır** seçili satırları
+ayar listesinden kaldırır. Klasörler ve içlerindeki PDF’ler diskten silinmez.
+**Ana arşiv klasörü** konumunu da seçin. En az bir giriş klasörü yeterlidir.
 **Otomatik klasör izlemeyi aç** seçeneğini etkinleştirip ayarları kaydedin.
 Varsayılan olarak izleme kapalıdır; arşiv konumu proje içindeki `Arşiv/` klasörüdür.
 Giriş ve arşiv klasörleri birbirinden ayrı yerel konumlar olmalıdır; ağ yolları kabul edilmez.
+Aynı giriş klasörü iki kez eklenemez. Değişiklikler kaydedilince uygulanır.
+
+Yeni taramalar liste sırasına göre **Tarama_1**, **Tarama_2**, **Tarama_3** … etiketiyle
+alınır ve arşivlenir; cihaz adı kullanılmaz. Klasör kaldırıldığında listedeki numaralar
+yenilenir ve sonraki taramalarda yeni sıra kullanılır. Önceden alınan işlemlerin
+numaralı etiketi korunur. Eski Canon/Kodak klasör seçimleri ilk açılışta otomatik olarak
+bu listeye taşınır; eski cihaz etiketli bekleyen işlemler de numaralı etikete geçirilir.
+Mevcut arşiv klasörleri yeniden adlandırılmaz.
 
 Tarayıcıyı USB üzerinden kendi yazılımıyla kullanın. Canon CaptureOnTouch / Kodak
 Smart Touch profilinde **renkli, çok sayfalı PDF**, benzersiz dosya adı ve seçilen giriş
@@ -113,11 +124,11 @@ Her kaynak PDF için, kayıt zamanına göre ayrı bir işlem klasörü oluşur:
 ```text
 Arşiv/
   2026-10-21/
-    14-32-08_Canon_001/
+    14-32-08_Tarama_1_001/
       THAEK12026124.pdf
       Arar_islem_raporu.json
       Arar_onay.json
-    14-32-08_Kodak_001/
+    14-32-08_Tarama_2_001/
       THAEK12026130.pdf
 ```
 

@@ -70,6 +70,16 @@ class ScanStore:
         with closing(self.connect()) as db:
             return {row[0] for row in db.execute('SELECT fingerprint FROM jobs')}
 
+    def migrate_input_labels(self,settings):
+        labels={local_path(value):f'Tarama_{index}' for index,value in enumerate(settings.input_dirs,1)}
+        for job in self.jobs(pending_only=True,include_pages=False):
+            if job['label'] not in ('Canon','Kodak'):
+                continue
+            fallback='Tarama_1' if job['label']=='Canon' else 'Tarama_2'
+            label=labels.get(local_path(job['original']).parent,fallback)
+            with closing(self.connect()) as db,db:
+                db.execute('UPDATE jobs SET label=? WHERE id=?',(label,job['id']))
+
     def update(self,job_id,**fields):
         if not fields or not set(fields)<= {'status','pages','error','archive'}:
             raise ValueError('Geçersiz işlem güncellemesi.')
@@ -180,9 +190,8 @@ class FolderWatcher:
         found=[]
         errors=[]
         present=set()
-        for label,value in (('Canon',settings.canon_input_dir),('Kodak',settings.kodak_input_dir)):
-            if not value:
-                continue
+        for index,value in enumerate(settings.input_dirs,1):
+            label=f'Tarama_{index}'
             try:
                 folder=local_path(value,must_exist=True)
                 for entry in sorted(folder.iterdir()):
