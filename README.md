@@ -33,6 +33,67 @@ EXE veya Python çalışma ortamı depoya dahil değildir.
 
 ## Çevrimdışı kurulum ve çalıştırma
 
+Windows 10/11 x64 için Python dahil tek dosyalı kurulum paketi hazırlanabilir.
+`dist/Arar-Setup-2026.10.24.1-win-x64.exe` dosyasını hedef bilgisayara taşıyıp **Kur**
+düğmesine basın. Python, Tkinter, yerel kütüphaneler ve mühür şablonları pakettedir;
+pip veya internet gerekmez. Yönetici yetkisi istemeden kullanıcı hesabına kurulur,
+Başlat menüsü ve isteğe bağlı masaüstü kısayolu oluşturur. Tarayıcı sürücüleri ayrıca kurulur.
+
+Paketi yerel Windows x64 CPython 3.12 ortamıyla yeniden üretmek için:
+
+```powershell
+python -S -B packaging/build_windows.py --python-home "C:\Python312" --version 2026.10.24.1
+```
+
+Derleme mevcut yerel `libs/` ve çalışma ortamını kullanır; paket indirmez.
+Windows'un yerleşik .NET Framework C# derleyicisi gerekir. Oluşan EXE içinden çalışma
+ortamı tekrar çıkarılıp Tkinter, SQLite, PDF okuma/çizimi ve ağ engeli doğrulanır.
+Yanındaki `.sha256` dosyası dağıtım kopyasının bütünlüğünü kontrol etmek içindir.
+EXE kod imzalı değildir. Kurulum/güncellemeden önce Arar pencerelerini kapatın.
+Windows uygulama listesinden kaldırma, ayarları ve arşiv belgelerini korur.
+Kaldırıcı UTF-8 BOM ve UTF-8 konsol kodlaması kullanır; Windows PowerShell 5.1'de
+Türkçe metinler ve Türkçe karakterli kullanıcı/klasör adları desteklenir.
+
+### Ubuntu / Debian çevrimdışı paketi
+
+Ubuntu 22.04+ veya Debian 12+ üzerinde **x86_64 (Intel/AMD 64 bit)** ve masaüstü
+oturumu için `dist/Arar-Setup-2026.10.24.2-linux-x86_64-glibc2.35.run` kullanılır:
+
+```sh
+sh Arar-Setup-2026.10.24.2-linux-x86_64-glibc2.35.run
+```
+
+Python 3.11, Tcl/Tk, NumPy, Pillow, PDF kütüphaneleri ve gerekli sistem kütüphaneleri
+pakettedir. Hedefte Python veya pip kurulumu, paket indirme ya da `sudo` gerekmez.
+İşletim sisteminin glibc 2.35+ ve grafik masaüstü sağlaması gerekir.
+Paket macOS, BSD, ARM64 veya musl tabanlı Alpine için değildir; bunlar için ayrı
+çalışma ortamı ve paket gerekir. Windows ve Linux paketlerinin binary dosyaları ayrıdır.
+
+Varsayılan kurulum `~/.local/share/arar/` altına yapılır; XDG_DATA_HOME tanımlıysa
+o konum kullanılır. Uygulama menüsüne kısayol ve `~/.local/bin/arar` komutu eklenir.
+`~/.local/share/arar/arar.sh` ile de açılabilir. Kaldırmak için aynı konumdaki
+`kaldir.sh` çalıştırılır. Güncelleme ve kaldırma mevcut ayarları ve belgeleri korur;
+uygulama açıkken dosyaları değiştirme engellenir.
+
+İsteğe bağlı özel konum ve menü kısayolu olmadan kurulum:
+
+```sh
+sh Arar-Setup-2026.10.24.2-linux-x86_64-glibc2.35.run --prefix "$HOME/Uygulamalar/Arar" --no-shortcuts
+```
+
+Linux paketini yeniden üretmek için aynı mimaride Ubuntu/Debian üzerinde CPython
+3.11+, Tcl/Tk, pip ve bir masaüstü oturumu gerekir. `requirements.txt` sürümlerinin
+bu Python/Linux için wheel dosyalarını yerel bir klasörde sağlayın:
+
+```sh
+python3.11 packaging/build_unix.py --wheelhouse /yerel/wheelhouse
+```
+
+Derleme `--no-index` kullanır; internetten paket indirmez. Standart kütüphane,
+Tcl/Tk, yerel paylaşılan kütüphaneler ve lisans metinleri pakete alınır. Paket açılışı,
+kurulum/güncelleme, Türkçe yollar ve belgeleri koruyan kaldırma akışı doğrulanır.
+Her iki paket için `.sha256` dosyası da üretilir.
+
 Hedef bilgisayara `libs/` ve `assets/` dahil proje klasörünü kopyalayın. Uyumlu
 Python kurulumu ile hedefte yalnızca şu komutu çalıştırın; pip veya internet gerekmez:
 

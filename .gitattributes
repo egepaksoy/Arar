@@ -6,3 +6,6 @@
 *.sh text eol=lf
 *.png binary
 libs/** -text
+dist/*.exe binary
+dist/*.run binary
+dist/*.sha256 text eol=lf

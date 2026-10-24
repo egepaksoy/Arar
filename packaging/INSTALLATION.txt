@@ -1,0 +1,21 @@
+ARAR — TAMAMEN ÇEVRİMDIŞI WINDOWS KURULUMU
+
+Windows 10/11 x64 masaüstü ortamında kullanın. Python ve kütüphaneler dahildir.
+Paketin hiçbir adımı pip, internet veya yerel ağ bağlantısı gerektirmez.
+Kurulum, Windows'un yerleşik .NET Framework ve PowerShell bileşenlerini kullanır.
+
+1. Arar-Setup dosyasını hedef bilgisayara USB ile taşıyın ve çalıştırın.
+2. Kur düğmesine basın. Yönetici yetkisi gerekmez.
+3. Arar'ı masaüstü veya Başlat menüsündeki kısayolundan açın.
+4. Ayarlar → Otomatik tarama bölümünden yerel giriş ve arşiv klasörlerini seçin.
+
+Tarayıcı sürücüleri ve cihaz yazılımı bu pakete dahil değildir. Bunlar ilgili
+cihazın çevrimdışı kurulum medyasından ayrıca kurulmalıdır.
+
+Güncellemeden veya kaldırmadan önce Arar'ı kapatın.
+Güncelleme mevcut .arar ayarlarını, tarama sırasını ve arşiv belgelerini korur.
+Kaldırma Windows uygulama listesinden veya uninstall.cmd ile yapılır; kaynak
+PDF'ler, ayarlar ve arşiv belgeleri silinmez. Kaldırıcı Türkçe karakterleri destekler.
+
+Bu paket kod imzalı değildir. Windows yayıncıyı tanımadığını bildirebilir.
+Kaynak kod ve paket oluşturma betiği projede packaging/ altındadır.
