@@ -1,7 +1,9 @@
 """Local image matching. Low confidence never becomes an automatic cover."""
 from pathlib import Path
 import threading
+from functools import lru_cache
 import numpy as np
+import cv2
 from PIL import Image, ImageOps
 import pypdfium2 as pdfium
 from .barcodes import read_barcodes
@@ -130,62 +132,93 @@ def _map_box(box,bounds,size,height):
     return (left+box[0]*sx,top+box[1]*sy,left+box[2]*sx,top+box[3]*sy)
 
 
-def _sum_window(array,h,w):
-    integral=np.pad(array,((1,0),(1,0))).cumsum(0).cumsum(1)
-    return integral[h:,w:]-integral[:-h,w:]-integral[h:,:-w]+integral[:-h,:-w]
+class _PreparedTemplate:
+    def __init__(self, array):
+        self.shape=array.shape
+        self.centered=array-array.mean()
+        self.norm=np.linalg.norm(self.centered)
+        self.centered.setflags(write=False)
+        self.pixels=np.ascontiguousarray(self.centered,dtype=np.float32)
+        self.pixels.setflags(write=False)
+
+
+class _PageCorrelation:
+    """Page-local data; released after scanning, never retains previous pages."""
+    def __init__(self, array):
+        self.array=array
+        self.shape=array.shape
+        self.pixels=np.ascontiguousarray(array,dtype=np.float32)
+        self.integral=np.pad(array,((1,0),(1,0))).cumsum(0).cumsum(1)
+        self.squared=np.pad(array*array,((1,0),(1,0))).cumsum(0).cumsum(1)
+
+    def variance(self,h,w):
+        def window(integral):
+            return integral[h:,w:]-integral[:-h,w:]-integral[h:,:-w]+integral[:-h,:-w]
+        sums=window(self.integral)
+        return window(self.squared)-sums*sums/(h*w)
+
+
+@lru_cache(maxsize=1)
+def _prepared_scan_templates():
+    """Immutable, small template data shared by all page scans."""
+    prepared=[]
+    for _,template in STAMP_TEMPLATES:
+        tight=_tight(template)
+        for width in (24,28,32,36,42,46,50,54,58,64,70):
+            height=max(16,round(width*tight.height/tight.width))
+            array=_ink(tight.resize((width,height),Image.Resampling.BILINEAR))
+            prepared.append(_PreparedTemplate(array))
+    return tuple(prepared)
 
 
 def _template_peak(array,template):
-    """Normalized correlation through FFT, using only bundled NumPy."""
+    """Full-page OpenCV search; re-score the peak in double precision."""
     h,w=template.shape
     if array.shape[0]<h or array.shape[1]<w:
         return 0.,(0,0)
-    centered=template-template.mean()
-    norm=np.linalg.norm(centered)
-    if norm<1e-6:
+    page=array if isinstance(array,_PageCorrelation) else _PageCorrelation(array)
+    template=template if isinstance(template,_PreparedTemplate) else _PreparedTemplate(template)
+    if template.norm<1e-6:
         return 0.,(0,0)
-    shape=(array.shape[0]+h-1,array.shape[1]+w-1)
-    # Power-of-two transforms are faster than arbitrary dimensions.
-    shape=tuple(1<<(n-1).bit_length() for n in shape)
-    corr=np.fft.irfft2(np.fft.rfft2(array,s=shape)*
-                       np.fft.rfft2(centered[::-1,::-1],s=shape),s=shape)
-    corr=corr[h-1:array.shape[0],w-1:array.shape[1]]
-    sums=_sum_window(array,h,w)
-    squares=_sum_window(array*array,h,w)
-    denom=np.sqrt(np.maximum(0,squares-sums*sums/(h*w)))*norm
-    scores=np.divide(corr,denom,out=np.zeros_like(corr),where=denom>1e-6)
-    y,x=np.unravel_index(np.argmax(scores),scores.shape)
-    return float(scores[y,x]),(int(x),int(y))
+    scores=cv2.matchTemplate(page.pixels,template.pixels,cv2.TM_CCOEFF_NORMED)
+    # Float32 FFT roundoff can give empty windows a spurious score near 1.
+    # 1e-8 is below the variance of even one changed 8-bit pixel (~1.5e-5).
+    scores[page.variance(h,w)<=max(1e-8,1e-12/template.norm**2)]=0.
+    _,_,_,(x,y)=cv2.minMaxLoc(scores)
+    # OpenCV uses float32 to find the location. Preserve threshold precision
+    # with the same normalized correlation on the original float64 pixels.
+    crop=page.array[y:y+h,x:x+w]
+    centered=crop-crop.mean()
+    denom=np.linalg.norm(centered)*template.norm
+    score=float(np.sum(centered*template.centered)/denom) if denom>1e-6 else 0.
+    return score,(x,y)
 
 
 def _scan_stamps(image,scale, cancel=None, *, min_score=.74, faint_blue_as_blue=False):
     # This fallback handles raster scans. Templates come from the supplied
     # examples, so uncertain or novel shapes remain subject to user review.
-    gray=_ink(image)
+    if cancel is not None and cancel.is_set():
+        return []
+    gray=_PageCorrelation(_ink(image))
     findings=[]
-    for _,template in STAMP_TEMPLATES:
-        tight=_tight(template)
-        # Small stamps lose correlation quickly between widely spaced sizes.
-        # Include intermediate scales rather than lowering the confidence bar.
-        for width in (24,28,32,36,42,46,50,54,58,64,70):
-            if cancel is not None and cancel.is_set():
-                return findings
-            height=max(16,round(width*tight.height/tight.width))
-            temp=_ink(tight.resize((width,height),Image.Resampling.BILINEAR))
-            score,(x,y)=_template_peak(gray,temp)
-            if score<min_score:
-                continue
-            crop=image.crop((x,y,x+width,y+height))
-            kind=_classify_color(crop,faint_blue_as_blue=faint_blue_as_blue)
-            if kind=='none':
-                continue
-            box=(x/scale,y/scale,(x+width)/scale,(y+height)/scale)
-            duplicate=next((f for f in findings if abs(f.box[0]-box[0])<12
-                            and abs(f.box[1]-box[1])<12),None)
-            if duplicate is None or score>duplicate.confidence:
-                if duplicate is not None:
-                    findings.remove(duplicate)
-                findings.append(Evidence(kind,box,score,'Görsel şablon eşleşmesi'))
+    for template in _prepared_scan_templates():
+        height,width=template.shape
+        if cancel is not None and cancel.is_set():
+            return findings
+        score,(x,y)=_template_peak(gray,template)
+        if score<min_score:
+            continue
+        crop=image.crop((x,y,x+width,y+height))
+        kind=_classify_color(crop,faint_blue_as_blue=faint_blue_as_blue)
+        if kind=='none':
+            continue
+        box=(x/scale,y/scale,(x+width)/scale,(y+height)/scale)
+        duplicate=next((f for f in findings if abs(f.box[0]-box[0])<12
+                        and abs(f.box[1]-box[1])<12),None)
+        if duplicate is None or score>duplicate.confidence:
+            if duplicate is not None:
+                findings.remove(duplicate)
+            findings.append(Evidence(kind,box,score,'Görsel şablon eşleşmesi'))
     return findings
 
 
@@ -216,6 +249,44 @@ def list_pages(source):
         return [PageResult(str(source),i,source_signature=signature) for i in range(len(doc))]
 
 
+def _load_analysis_page(source,index,cancel=None):
+    """Copy PDF data while locked; no PDFium handles escape into image analysis."""
+    with PDF_LOCK:
+        if cancel is not None and cancel.is_set():
+            return None
+        with pdfium.PdfDocument(str(source)) as doc:
+            page=doc[index]
+            try:
+                width,height=page.get_size()
+                bitmap=page.render(scale=4)
+                try:
+                    full=bitmap.to_pil().convert('RGB')
+                finally:
+                    bitmap.close()
+                embedded=[]
+                fallback=False
+                for obj in page.get_objects(filter=[pdfium.raw.FPDF_PAGEOBJ_IMAGE]):
+                    if cancel is not None and cancel.is_set():
+                        return None
+                    size=obj.get_px_size()
+                    bounds=obj.get_bounds()
+                    if size[0]<40 or size[1]<20:
+                        continue
+                    if (size[0]*size[1]>12_000_000 or
+                            (bounds[2]-bounds[0]>width*.75 and bounds[3]-bounds[1]>height*.65)):
+                        # Full-page scans are already in full; avoid decoding them twice.
+                        fallback=True
+                        continue
+                    bitmap=obj.get_bitmap()
+                    try:
+                        embedded.append((bitmap.to_pil().convert('RGB'),bounds))
+                    finally:
+                        bitmap.close()
+                return full,height,embedded,fallback
+            finally:
+                page.close()
+
+
 def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshold=.74,
                  review_other_barcodes=True, review_missing_stamp=True, faint_blue_as_blue=False):
     evidence=[]
@@ -228,92 +299,66 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
     stat=source.stat()
     if result.source_signature and result.source_signature!=(stat.st_size,stat.st_mtime_ns):
         raise ValueError('Kaynak PDF değişmiş. Dosyayı kaldırıp yeniden ekleyin.')
-    with PDF_LOCK, pdfium.PdfDocument(str(source)) as doc:
-        page=doc[result.index]
-        try:
-            height=page.get_height()
-            # Locate text first. Barcode pixels are decoded only after OCR has
-            # established the report block; image templates are the fallback.
-            bitmap=page.render(scale=4)
-            try:
-                full=bitmap.to_pil().convert('RGB')
-            finally:
-                bitmap.close()
-            rotation,headings=find_report_headings(full,cancel)
+    loaded=_load_analysis_page(source,result.index,cancel)
+    if loaded is None:
+        return result
+    full,height,embedded,fallback=loaded
+    rotation,headings=find_report_headings(full,cancel)
+    if cancel is not None and cancel.is_set():
+        return result
+    if headings:
+        oriented=full.rotate(rotation,expand=True)
+        for heading in headings:
+            mapped=_unrotate_box(heading.box,rotation,full.size)
+            heading_evidence.append(Evidence('heading',tuple(v/4 for v in mapped),
+                                             heading.confidence,'OCR: RECEIVING REPORT NO'))
+            bars=_barcodes_below_heading(oriented,heading,cancel)
+            if not bars:
+                unreadable_heading=True
+            for b in bars:
+                box=_unrotate_box(b.box,rotation,full.size)
+                targets.append((b.value,tuple(v/4 for v in box),
+                                min(heading.confidence,b.score),b.kind+' / OCR başlığı'))
+        # Preserve information about other codes without using them as
+        # report targets or requiring an image match for OCR results.
+        others.extend(b.value for b in read_barcodes(oriented,stride=12))
+    for im,bounds in embedded:
+        if cancel is not None and cancel.is_set():
+            return result
+        if not headings and im.width/im.height>2.5:
+            for b in read_barcodes(im,stride=2):
+                score=heading_score(im,b)
+                box=_map_box(b.box,bounds,im.size,height)
+                if score>=.8:
+                    targets.append((b.value,box,min(score,b.score),b.kind))
+                else:
+                    others.append(b.value)
+        stamp=_stamp_match(im)
+        if stamp and stamp[1]>=stamp_threshold:
+            kind=_classify_color(im,faint_blue_as_blue=faint_blue_as_blue)
+            evidence.append(Evidence(kind,_box_pdf(bounds,height),stamp[1],
+                                     'Örnek mühür ile görsel eşleşme'))
+    if not targets or fallback:
+        # 288 dpi retains narrow bars. Try four cardinal orientations.
+        for rotation in (() if headings else (0,90,180,270)):
             if cancel is not None and cancel.is_set():
                 return result
-            if headings:
-                oriented=full.rotate(rotation,expand=True)
-                for heading in headings:
-                    mapped=_unrotate_box(heading.box,rotation,full.size)
-                    heading_evidence.append(Evidence('heading',tuple(v/4 for v in mapped),
-                                                     heading.confidence,'OCR: RECEIVING REPORT NO'))
-                    bars=_barcodes_below_heading(oriented,heading,cancel)
-                    if not bars:
-                        unreadable_heading=True
-                    for b in bars:
-                        box=_unrotate_box(b.box,rotation,full.size)
-                        targets.append((b.value,tuple(v/4 for v in box),
-                                        min(heading.confidence,b.score),b.kind+' / OCR başlığı'))
-                # Preserve information about other codes without using them as
-                # report targets or requiring an image match for OCR results.
-                others.extend(b.value for b in read_barcodes(oriented,stride=12))
-            for obj in page.get_objects(filter=[pdfium.raw.FPDF_PAGEOBJ_IMAGE]):
-                if cancel is not None and cancel.is_set():
-                    return result
-                size=obj.get_px_size()
-                bounds=obj.get_bounds()
-                if size[0]<40 or size[1]<20:
-                    continue
-                if size[0]*size[1]>12_000_000:
-                    fallback=True
-                    continue
-                bitmap=obj.get_bitmap()
-                try:
-                    im=bitmap.to_pil().convert('RGB')
-                finally:
-                    bitmap.close()
-                # Large full-page images need page-space detection, rotation
-                # handling, and scan templates rather than individual objects.
-                if bounds[2]-bounds[0]>page.get_width()*.75 and bounds[3]-bounds[1]>height*.65:
-                    fallback=True
-                    continue
-                if not headings and im.width/im.height>2.5:
-                    for b in read_barcodes(im,stride=2):
-                        score=heading_score(im,b)
-                        box=_map_box(b.box,bounds,im.size,height)
-                        if score>=.8:
-                            targets.append((b.value,box,min(score,b.score),b.kind))
-                        else:
-                            others.append(b.value)
-                stamp=_stamp_match(im)
-                if stamp and stamp[1]>=stamp_threshold:
-                    kind=_classify_color(im,faint_blue_as_blue=faint_blue_as_blue)
-                    evidence.append(Evidence(kind,_box_pdf(bounds,height),stamp[1],
-                                             'Örnek mühür ile görsel eşleşme'))
-            if not targets or fallback:
-                # 288 dpi retains narrow bars. Try four cardinal orientations.
-                for rotation in (() if headings else (0,90,180,270)):
-                    if cancel is not None and cancel.is_set():
-                        return result
-                    oriented=full.rotate(rotation,expand=True)
-                    bars=read_barcodes(oriented,stride=12)
-                    for b in bars:
-                        score=heading_score(oriented,b)
-                        if score>=.8:
-                            # Map displayed crop back into original PDF coordinates.
-                            box=_unrotate_box(b.box,rotation,full.size)
-                            targets.append((b.value,tuple(v/4 for v in box),min(score,b.score),b.kind))
-                        else:
-                            others.append(b.value)
-                    if targets:
-                        break
-                if fallback or (result.index==0 and not targets and not evidence):
-                    small=full.resize((round(full.width/4*1.25),round(full.height/4*1.25)))
-                    evidence.extend(_scan_stamps(small,1.25,cancel,min_score=scan_stamp_threshold,
-                                                 faint_blue_as_blue=faint_blue_as_blue))
-        finally:
-            page.close()
+            oriented=full.rotate(rotation,expand=True)
+            bars=read_barcodes(oriented,stride=12)
+            for b in bars:
+                score=heading_score(oriented,b)
+                if score>=.8:
+                    # Map displayed crop back into original PDF coordinates.
+                    box=_unrotate_box(b.box,rotation,full.size)
+                    targets.append((b.value,tuple(v/4 for v in box),min(score,b.score),b.kind))
+                else:
+                    others.append(b.value)
+            if targets:
+                break
+        if fallback or (result.index==0 and not targets and not evidence):
+            small=full.resize((round(full.width/4*1.25),round(full.height/4*1.25)))
+            evidence.extend(_scan_stamps(small,1.25,cancel,min_score=scan_stamp_threshold,
+                                         faint_blue_as_blue=faint_blue_as_blue))
     # Deduplicate observations without choosing among different target numbers.
     if cancel is not None and cancel.is_set():
         return result

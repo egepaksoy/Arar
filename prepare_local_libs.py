@@ -35,6 +35,8 @@ from pypdf import PdfWriter, PdfReader
 import pypdfium2 as pdfium
 import pypdfium2_raw
 import tesserocr
+import cv2
+assert cv2.countNonZero(np.ones((3,3),dtype=np.uint8))==9
 from arar.report_ocr import find_report_headings
 assert find_report_headings(Image.open(Path(sys.argv[1])/'assets/receiving_report.png'))[1]
 assert np.linalg.norm(np.array([3., 4.])) == 5.

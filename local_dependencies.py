@@ -8,7 +8,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 LIBS = ROOT / 'libs'
-MODULES = ('PIL', 'numpy', 'pypdf', 'pypdfium2', 'pypdfium2_raw', 'tesserocr')
+MODULES = ('PIL', 'numpy', 'pypdf', 'pypdfium2', 'pypdfium2_raw', 'tesserocr', 'cv2')
 PREPARATION_HINT = (
     'Geliştirme bilgisayarında setup_offline_libs.bat veya setup_offline_libs.sh çalıştırın ve hazırlanan '
     'libs klasörünü projeyle birlikte taşıyın. Ayrıntılar: README_OFFLINE.md. '

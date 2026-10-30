@@ -21,6 +21,7 @@ Standart Python kurulumu bunları sağlar; yalnızca embeddable Python ZIP’i y
 | pypdf | pypdf | 6.10.0 | Orijinal PDF sayfalarını birleştirme |
 | pypdfium2 | pypdfium2, pypdfium2_raw | 5.13.0 | PDF sayfalarını görüntüleme |
 | tesserocr | tesserocr | 2.12.0 | Yerel Tesseract ile Receiving Report No yazısını bulma |
+| opencv-python-headless | cv2 | 4.13.0.92 | Tam sayfa üzerinde hızlı mühür şablonu karşılaştırması |
 
 OCR dil modeli `assets/tessdata/eng.traineddata` içinde projeyle taşınır.
 Kaynağı, sürümü, SHA-256 özeti ve lisansı aynı klasördedir. Başlatma ve paket

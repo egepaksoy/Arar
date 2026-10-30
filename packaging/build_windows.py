@@ -20,7 +20,7 @@ def copy_tree(source,target):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--python-home',type=Path,default=Path(sys.base_prefix))
-    parser.add_argument('--version',default='2026.10.30.2')
+    parser.add_argument('--version',default='2026.10.30.5')
     args=parser.parse_args()
     if os.name!='nt' or sys.maxsize<=2**32:
         parser.error('Build requires Windows x64 and a matching local CPython runtime.')

@@ -34,7 +34,7 @@ EXE veya Python çalışma ortamı depoya dahil değildir.
 ## Çevrimdışı kurulum ve çalıştırma
 
 Windows 10/11 x64 için Python dahil tek dosyalı kurulum paketi hazırlanabilir.
-`dist/Arar-Setup-2026.10.30.2-win-x64.exe` dosyasını hedef bilgisayara taşıyıp **Kur**
+`dist/Arar-Setup-2026.10.30.5-win-x64.exe` dosyasını hedef bilgisayara taşıyıp **Kur**
 düğmesine basın. Python, Tkinter, yerel kütüphaneler ve mühür şablonları pakettedir;
 pip veya internet gerekmez. Yönetici yetkisi istemeden kullanıcı hesabına kurulur,
 Başlat menüsü ve isteğe bağlı masaüstü kısayolu oluşturur. Tarayıcı sürücüleri ayrıca kurulur.
@@ -42,7 +42,7 @@ Başlat menüsü ve isteğe bağlı masaüstü kısayolu oluşturur. Tarayıcı 
 Paketi yerel Windows x64 CPython 3.12 ortamıyla yeniden üretmek için:
 
 ```powershell
-python -S -B packaging/build_windows.py --python-home "C:\Python312" --version 2026.10.30.2
+python -S -B packaging/build_windows.py --python-home "C:\Python312" --version 2026.10.30.5
 ```
 
 Derleme mevcut yerel `libs/` ve çalışma ortamını kullanır; paket indirmez.
@@ -325,7 +325,12 @@ kullanıcı incelemesi gerektirir. Başlık hiçbir yönde bulunamazsa `assets` 
 görsel başlık örneğiyle önceki doğrulama yöntemi kullanılır. Bu yedek yöntemde de
 numara örnekten kopyalanmaz, belgedeki barkoddan çözülür.
 OCR motoru ve İngilizce dil modeli kurulumla taşınır; çalışma sırasında indirme
-veya bulut servisi kullanılmaz. Mühür tespiti mevcut görsel şablonları kullanır.
+veya bulut servisi kullanılmaz. Mühür şablonları bir kez hazırlanır; bütün sayfa
+OpenCV `matchTemplate` ile aynı 77 şablon/boyut kombinasyonunda aranır. Aday bölge
+elemesi yapılmaz. Tepe eşleşmenin puanı eşik karşılaştırmasından önce çift
+hassasiyetle tekrar hesaplanır. Renk sınıflandırması ve mühür karar kuralları korunur.
+PDFium erişimi kilit altında kalır; OCR, barkod ve mühür hesaplamaları bağımsız
+görüntü kopyalarında kilit dışında çalışır. Önizleme bu hesaplamaları beklemez.
 Tam sayfa taramalarda barkod okuma ve 90 derece yön düzeltme desteklenir.
 Yalnızca mavi mühür bulunursa kapak, diğer mühürlerde konuma ve ayarlara göre karar
 verilir. Farklı mühür tasarımları, yazı tipleri,
