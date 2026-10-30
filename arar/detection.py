@@ -49,7 +49,14 @@ def heading_score(image,barcode):
     width=x1-x0
     crop=image.crop((max(0,x0-2),max(0,int(y0-width*.09)),min(image.width,x1+2),
                      max(1,int(y0-width*.015))))
-    return _similarity(crop,HEADER)
+    score=_similarity(crop,HEADER)
+    if score<.8:
+        # Scanner paper tint and compression speckles must not define the
+        # heading's ink bounds. Keep the original comparison for clean PDFs.
+        clean=crop.convert('L').point(lambda value: 0 if value<180 else 255)
+        reference=HEADER.convert('L').point(lambda value: 0 if value<180 else 255)
+        score=max(score,_similarity(clean,reference))
+    return score
 
 
 def _stamp_match(image):
@@ -123,7 +130,9 @@ def _scan_stamps(image,scale, cancel=None, *, min_score=.74, faint_blue_as_blue=
     findings=[]
     for _,template in STAMP_TEMPLATES:
         tight=_tight(template)
-        for width in (24,32,42,54,70):
+        # Small stamps lose correlation quickly between widely spaced sizes.
+        # Include intermediate scales rather than lowering the confidence bar.
+        for width in (24,28,32,36,42,46,50,54,58,64,70):
             if cancel is not None and cancel.is_set():
                 return findings
             height=max(16,round(width*tight.height/tight.width))
@@ -136,7 +145,11 @@ def _scan_stamps(image,scale, cancel=None, *, min_score=.74, faint_blue_as_blue=
             if kind=='none':
                 continue
             box=(x/scale,y/scale,(x+width)/scale,(y+height)/scale)
-            if not any(abs(f.box[0]-box[0])<12 and abs(f.box[1]-box[1])<12 for f in findings):
+            duplicate=next((f for f in findings if abs(f.box[0]-box[0])<12
+                            and abs(f.box[1]-box[1])<12),None)
+            if duplicate is None or score>duplicate.confidence:
+                if duplicate is not None:
+                    findings.remove(duplicate)
                 findings.append(Evidence(kind,box,score,'Görsel şablon eşleşmesi'))
     return findings
 
@@ -237,7 +250,7 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
                             others.append(b.value)
                     if targets:
                         break
-                if (targets and fallback) or (result.index==0 and not targets and not evidence):
+                if fallback or (result.index==0 and not targets and not evidence):
                     small=full.resize((round(full.width/4*1.25),round(full.height/4*1.25)))
                     evidence.extend(_scan_stamps(small,1.25,cancel,min_score=scan_stamp_threshold,
                                                  faint_blue_as_blue=faint_blue_as_blue))

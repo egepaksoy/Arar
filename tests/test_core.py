@@ -172,6 +172,39 @@ class ContextRuleTests(unittest.TestCase):
 
 
 class DetectionTests(unittest.TestCase):
+    def test_scanned_heading_ignores_paper_tint_and_speckles(self):
+        from arar.detection import HEADER, heading_score
+        from arar.barcodes import Barcode
+        # Tinted pixels outside the printed title used to widen its ink bounds.
+        image=Image.new('RGB',(760,140),(228,230,233))
+        image.paste(HEADER,(0,0))
+        image.putpixel((624,2),(190,190,190))
+        barcode=Barcode('TEST',(0,56,625,110),1.)
+        self.assertGreaterEqual(heading_score(image,barcode),.8)
+
+    def test_scan_matches_stamp_between_original_search_sizes(self):
+        from arar.detection import STAMP_TEMPLATES, _tight
+        template=_tight(STAMP_TEMPLATES[2][1])
+        width=50
+        stamp=template.resize((width,round(width*template.height/template.width)),Image.Resampling.BILINEAR)
+        image=Image.new('RGB',(180,180),'white')
+        image.paste(stamp,(64,52))
+        findings=_scan_stamps(image,1.25)
+        self.assertTrue(any(f.confidence>.9 and abs(f.box[0]-64/1.25)<2
+                            and abs(f.box[1]-52/1.25)<2 for f in findings))
+
+    def test_later_raster_page_without_report_still_checks_stamps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'scan.pdf'
+            image=Image.new('RGB',(240,320),'white')
+            image.save(source,'PDF',save_all=True,append_images=[image])
+            with patch('arar.detection._scan_stamps',return_value=[Evidence('black',(10,10,30,30),.9)]) as scan:
+                result=analyze_page(list_pages(source)[1])
+            scan.assert_called_once()
+            self.assertEqual(result.stamp,'black')
+            self.assertFalse(result.target_found)
+            self.assertEqual(result.state,'attachment')
+
     def test_faint_blue_option_requires_blue_ink_and_preserves_neutral_colors(self):
         for color,normal,enabled in (
             ((30,60,180),'blue','blue'),
