@@ -9,7 +9,7 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - Yerel PDF’leri içe aktarma, seçili dosyayı kaldırma ve çalışma alanındaki dosyaları temizleme.
 - Ayarlardan seçilen klasör ve alt klasörlerindeki örnek PDF’leri açma.
 - Sayfa önizlemesi, %25–%400 yakınlaştırma, Ctrl + fare tekerleği ve sürükleyerek gezinme.
-- Code 39 ve Code 128 barkodlarını okuma; ürün barkodları yerine Receiving Report başlığını doğrulama.
+- Önce OCR ile Receiving Report No yazısını bulma, altında dar ve gerekirse geniş alanda Code 39 / Code 128 barkodunu okuma. Yazı bulunamazsa yerel görsel şablonla arama.
 - Mavi, siyah, soluk/renksiz ve birden fazla mühür türü için kapak değerlendirmesi.
 - **Analiz sürerken tamamlanan sayfaları inceleme ve kullanıcı kararı verme.** Arka plandaki sonuçlar manuel kararları değiştirmez.
 - İşlenen sayfalarda yeşil tik, kullanıcı incelemesi gerekenlerde kırmızı işaret.
@@ -25,7 +25,7 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 
 - Hazırlanan `libs/` kopyası için CPython 3.12.x, Windows x64.
 - Tkinter içeren bir Python kurulumu ve masaüstü oturumu.
-- Projeyle birlikte taşınan dolu `libs/` klasörü (Pillow, NumPy, pypdf ve pypdfium2).
+- Projeyle birlikte taşınan dolu `libs/` klasörü (Pillow, NumPy, pypdf, pypdfium2 ve tesserocr) ve `assets/tessdata/eng.traineddata` OCR dil modeli.
 
 Windows için `baslat.bat`, Unix / Linux / macOS için `baslat.sh` bulunur.
 Windows binary paketleri diğer işletim sistemlerinde çalışmaz; bu platformlar için ayrı libs hazırlığı gerekir.
@@ -34,7 +34,7 @@ EXE veya Python çalışma ortamı depoya dahil değildir.
 ## Çevrimdışı kurulum ve çalıştırma
 
 Windows 10/11 x64 için Python dahil tek dosyalı kurulum paketi hazırlanabilir.
-`dist/Arar-Setup-2026.10.24.1-win-x64.exe` dosyasını hedef bilgisayara taşıyıp **Kur**
+`dist/Arar-Setup-2026.10.30.2-win-x64.exe` dosyasını hedef bilgisayara taşıyıp **Kur**
 düğmesine basın. Python, Tkinter, yerel kütüphaneler ve mühür şablonları pakettedir;
 pip veya internet gerekmez. Yönetici yetkisi istemeden kullanıcı hesabına kurulur,
 Başlat menüsü ve isteğe bağlı masaüstü kısayolu oluşturur. Tarayıcı sürücüleri ayrıca kurulur.
@@ -42,7 +42,7 @@ Başlat menüsü ve isteğe bağlı masaüstü kısayolu oluşturur. Tarayıcı 
 Paketi yerel Windows x64 CPython 3.12 ortamıyla yeniden üretmek için:
 
 ```powershell
-python -S -B packaging/build_windows.py --python-home "C:\Python312" --version 2026.10.24.1
+python -S -B packaging/build_windows.py --python-home "C:\Python312" --version 2026.10.30.2
 ```
 
 Derleme mevcut yerel `libs/` ve çalışma ortamını kullanır; paket indirmez.
@@ -316,14 +316,24 @@ kayıt engellenir. Kayıt sırasında mevcut PDF’lerin üzerine yazılmaz.
 
 ## Tanımanın kapsamı
 
-Başlık ve mühür tespiti `assets` klasöründeki yerel görsel şablonları kullanır.
+Başlık önce yerel Tesseract OCR motoruyla yazı olarak aranır. Receiving Report No
+yazısı bulunduğunda altındaki dar alanda barkod okunur; sonuç alınamazsa alan
+genişletilir. Başlıkla yatay hizası uyuşmayan komşu ürün barkodları kabul edilmez.
+Başlık bulunduğu hâlde barkod okunamazsa sayfa incelemeye alınır; başka bir
+barkod veya örnekteki numara otomatik atanmaz. Birden fazla farklı numara da
+kullanıcı incelemesi gerektirir. Başlık hiçbir yönde bulunamazsa `assets` içindeki
+görsel başlık örneğiyle önceki doğrulama yöntemi kullanılır. Bu yedek yöntemde de
+numara örnekten kopyalanmaz, belgedeki barkoddan çözülür.
+OCR motoru ve İngilizce dil modeli kurulumla taşınır; çalışma sırasında indirme
+veya bulut servisi kullanılmaz. Mühür tespiti mevcut görsel şablonları kullanır.
 Tam sayfa taramalarda barkod okuma ve 90 derece yön düzeltme desteklenir.
 Yalnızca mavi mühür bulunursa kapak, diğer mühürlerde konuma ve ayarlara göre karar
 verilir. Farklı mühür tasarımları, yazı tipleri,
 eğik veya düşük kaliteli taramalar manuel inceleme gerektirebilir.
 
-Doğrudan tarayıcı cihazı bağlantısı, klasör izleme, OCR, parola korumalı PDF açma
-ve oturum geri yükleme bu sürümün kapsamında değildir. Ayarlar yerel `.arar`
+Doğrudan tarayıcı cihazı bağlantısı ve parola korumalı PDF açma bu sürümün
+kapsamında değildir. OCR yalnızca Receiving Report No başlığını bulmak için
+kullanılır; tüm belge metnini dışa aktarmaz. Ayarlar yerel `.arar`
 klasörüne kaydedilir; sayfa kararları oturum içinde tutulur.
 
 ## Testler

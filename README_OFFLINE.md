@@ -20,6 +20,13 @@ Standart Python kurulumu bunları sağlar; yalnızca embeddable Python ZIP’i y
 | numpy | numpy | 2.3.5 | Barkod ve mühür görüntü hesaplamaları |
 | pypdf | pypdf | 6.10.0 | Orijinal PDF sayfalarını birleştirme |
 | pypdfium2 | pypdfium2, pypdfium2_raw | 5.13.0 | PDF sayfalarını görüntüleme |
+| tesserocr | tesserocr | 2.12.0 | Yerel Tesseract ile Receiving Report No yazısını bulma |
+
+OCR dil modeli `assets/tessdata/eng.traineddata` içinde projeyle taşınır.
+Kaynağı, sürümü, SHA-256 özeti ve lisansı aynı klasördedir. Başlatma ve paket
+doğrulaması gerçek bir başlık üzerinde OCR çalıştırır; model veya yerel OCR
+kütüphanesi eksikse sessizce yalnızca eski yönteme geçilmez. Windows wheel'i
+Tesseract/Leptonica bileşenlerini içerir; hedef bilgisayara ayrıca Tesseract kurulmaz.
 
 Bu sürümlerin Python 3.12 üzerinde ek zorunlu üçüncü taraf bağımlılığı yoktur.
 `pathlib`, `json`, `socket`, `threading`, `tkinter` gibi standart modüller requirements’a eklenmez.

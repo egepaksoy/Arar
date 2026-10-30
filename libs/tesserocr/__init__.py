@@ -1,0 +1,13 @@
+"""""" # start delvewheel patch
+def _delvewheel_patch_1_13_2():
+    import os
+    if os.path.isdir(libs_dir := os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, 'tesserocr.libs'))):
+        os.add_dll_directory(libs_dir)
+
+
+_delvewheel_patch_1_13_2()
+del _delvewheel_patch_1_13_2
+# end delvewheel patch
+
+from .tesserocr import __version__
+from .tesserocr import *

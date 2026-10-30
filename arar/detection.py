@@ -7,6 +7,7 @@ import pypdfium2 as pdfium
 from .barcodes import read_barcodes
 from .models import Evidence, PageResult, ROOT
 from .offline import local_path
+from .report_ocr import find_report_headings
 
 PDF_LOCK = threading.RLock()  # PDFium is not safe for simultaneous thread calls.
 ASSETS = ROOT / 'assets'
@@ -57,6 +58,40 @@ def heading_score(image,barcode):
         reference=HEADER.convert('L').point(lambda value: 0 if value<180 else 255)
         score=max(score,_similarity(clean,reference))
     return score
+
+
+def _barcodes_below_heading(image, heading, cancel=None):
+    """Try the immediate block, then a wider/deeper block; keep ambiguities."""
+    from .barcodes import Barcode
+    x0,y0,x1,y1=heading.box
+    width,height=x1-x0,y1-y0
+    for margin,span,depth in ((.08,1.9,5),(.18,None,12)):
+        if cancel is not None and cancel.is_set():
+            return []
+        left=max(0,int(x0-width*margin))
+        top=max(0,int(y1-height*.25))
+        right=image.width if span is None else min(image.width,round(x0+width*span))
+        bottom=min(image.height,round(y1+height*depth))
+        if right<=left or bottom<=top:
+            continue
+        crop=image.crop((left,top,right,bottom))
+        found=[]
+        # Local contrast helps pale scans without changing the barcode decoder.
+        for candidate_image in (crop,ImageOps.autocontrast(crop.convert('L'))):
+            for barcode in read_barcodes(candidate_image,stride=2):
+                a,b,c,d=barcode.box
+                box=(a+left,b+top,c+left,d+top)
+                overlap=max(0,min(box[2],x1)-max(box[0],x0))
+                # A nearby PART NO barcode must not inherit this heading.
+                if (abs(box[0]-x0)>max(height*2,width*.18)
+                        or overlap<width*.55 or box[1]<y1-height*.5):
+                    continue
+                found.append(Barcode(barcode.value,box,barcode.score,barcode.kind))
+            if found:
+                break
+        if found:
+            return found
+    return []
 
 
 def _stamp_match(image):
@@ -187,6 +222,8 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
     targets=[]
     others=[]
     fallback=False
+    heading_evidence=[]
+    unreadable_heading=False
     source=local_path(result.source,must_exist=True)
     stat=source.stat()
     if result.source_signature and result.source_signature!=(stat.st_size,stat.st_mtime_ns):
@@ -195,6 +232,32 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
         page=doc[result.index]
         try:
             height=page.get_height()
+            # Locate text first. Barcode pixels are decoded only after OCR has
+            # established the report block; image templates are the fallback.
+            bitmap=page.render(scale=4)
+            try:
+                full=bitmap.to_pil().convert('RGB')
+            finally:
+                bitmap.close()
+            rotation,headings=find_report_headings(full,cancel)
+            if cancel is not None and cancel.is_set():
+                return result
+            if headings:
+                oriented=full.rotate(rotation,expand=True)
+                for heading in headings:
+                    mapped=_unrotate_box(heading.box,rotation,full.size)
+                    heading_evidence.append(Evidence('heading',tuple(v/4 for v in mapped),
+                                                     heading.confidence,'OCR: RECEIVING REPORT NO'))
+                    bars=_barcodes_below_heading(oriented,heading,cancel)
+                    if not bars:
+                        unreadable_heading=True
+                    for b in bars:
+                        box=_unrotate_box(b.box,rotation,full.size)
+                        targets.append((b.value,tuple(v/4 for v in box),
+                                        min(heading.confidence,b.score),b.kind+' / OCR başlığı'))
+                # Preserve information about other codes without using them as
+                # report targets or requiring an image match for OCR results.
+                others.extend(b.value for b in read_barcodes(oriented,stride=12))
             for obj in page.get_objects(filter=[pdfium.raw.FPDF_PAGEOBJ_IMAGE]):
                 if cancel is not None and cancel.is_set():
                     return result
@@ -215,7 +278,7 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
                 if bounds[2]-bounds[0]>page.get_width()*.75 and bounds[3]-bounds[1]>height*.65:
                     fallback=True
                     continue
-                if im.width/im.height>2.5:
+                if not headings and im.width/im.height>2.5:
                     for b in read_barcodes(im,stride=2):
                         score=heading_score(im,b)
                         box=_map_box(b.box,bounds,im.size,height)
@@ -230,12 +293,7 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
                                              'Örnek mühür ile görsel eşleşme'))
             if not targets or fallback:
                 # 288 dpi retains narrow bars. Try four cardinal orientations.
-                bitmap=page.render(scale=4)
-                try:
-                    full=bitmap.to_pil().convert('RGB')
-                finally:
-                    bitmap.close()
-                for rotation in (0,90,180,270):
+                for rotation in (() if headings else (0,90,180,270)):
                     if cancel is not None and cancel.is_set():
                         return result
                     oriented=full.rotate(rotation,expand=True)
@@ -257,19 +315,23 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
         finally:
             page.close()
     # Deduplicate observations without choosing among different target numbers.
+    if cancel is not None and cancel.is_set():
+        return result
     unique=list(dict.fromkeys(t[0] for t in targets))
-    result.other_barcodes=list(dict.fromkeys(others))
-    result.target_found=bool(targets)
+    result.other_barcodes=list(dict.fromkeys(v for v in others if v not in unique))
+    result.target_found=bool(targets or headings)
     result.barcode=unique[0] if len(unique)==1 else ''
-    result.evidence=evidence+[Evidence('barcode',b,s,k+': '+v) for v,b,s,k in targets]
+    result.evidence=evidence+heading_evidence+[Evidence('barcode',b,s,k+': '+v) for v,b,s,k in targets]
     kinds={f.kind for f in evidence}
     result.stamp='mixed' if 'blue' in kinds and ('black' in kinds or 'faint' in kinds) else (
         'black' if 'black' in kinds else 'faint' if 'faint' in kinds else 'blue' if 'blue' in kinds else 'none')
-    result.first_page_error=result.index==0 and not targets and result.stamp=='none'
+    result.first_page_error=result.index==0 and not result.target_found and result.stamp=='none'
     if result.first_page_error:
         result.state,result.reason='review','İlk sayfada Receiving Report No ve herhangi bir mühür bulunamadı. Dosyayı kontrol edin.'
     elif len(unique)>1:
         result.state,result.reason='review','Birden fazla Receiving Report numarası var. Kapak numarasını belirleyin.'
+    elif unreadable_heading:
+        result.state,result.reason='review','Receiving Report No yazısı bulundu ancak altındaki barkod genişletilmiş aramada da okunamadı. Kullanıcı kararı gerekli.'
     elif targets and not result.barcode:
         result.state,result.reason='review','Receiving Report barkodu okunamadı.'
     elif targets and result.stamp=='blue':

@@ -32,8 +32,11 @@ def verify(prefix):
     import tempfile
     import tkinter as tk
     from pypdf import PdfWriter
-    from arar.detection import list_pages,render_page
+    from arar.detection import list_pages,render_page,analyze_page
     from arar.app import ArarApp
+    from arar.report_ocr import find_report_headings
+    from PIL import Image
+    assert find_report_headings(Image.open(prefix/'app/assets/receiving_report.png'))[1]
     assert Path(sys.prefix).resolve()==(prefix/'runtime').resolve()
     assert Path(os.__file__).resolve().is_relative_to(prefix/'runtime')
     root=tk.Tk()
@@ -50,6 +53,11 @@ def verify(prefix):
             writer.write(handle)
         assert len(list_pages(source))==1
         assert render_page(source,0)[0].width>0
+        scan=Path(scratch)/'ocr-scan.pdf'
+        Image.open(prefix/'app/assets/receiving_report.png').convert('RGB').save(scan,'PDF',resolution=288)
+        result=analyze_page(list_pages(scan)[0])
+        assert result.barcode=='THAEK12026124'
+        assert any(e.kind=='heading' for e in result.evidence)
     with sqlite3.connect(':memory:') as db:
         assert db.execute('SELECT 1').fetchone()==(1,)
     print('Paket doğrulandı: Python, Tkinter, SQLite, PDF ve ağ engeli çalışıyor.')

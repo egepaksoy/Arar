@@ -3,3 +3,4 @@ Pillow==12.3.0
 numpy==2.3.5
 pypdf==6.10.0
 pypdfium2==5.13.0
+tesserocr==2.12.0

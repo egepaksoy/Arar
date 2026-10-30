@@ -20,7 +20,7 @@ def copy_tree(source,target):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--python-home',type=Path,default=Path(sys.base_prefix))
-    parser.add_argument('--version',default='2026.10.24.1')
+    parser.add_argument('--version',default='2026.10.30.2')
     args=parser.parse_args()
     if os.name!='nt' or sys.maxsize<=2**32:
         parser.error('Build requires Windows x64 and a matching local CPython runtime.')
@@ -81,8 +81,11 @@ install_network_guard()
 import tkinter as tk, sqlite3, tempfile
 from pathlib import Path
 from pypdf import PdfWriter
-from arar.detection import list_pages, render_page
+from arar.detection import list_pages, render_page, analyze_page
 from arar.app import ArarApp
+from arar.report_ocr import find_report_headings
+from PIL import Image
+assert find_report_headings(Image.open('assets/receiving_report.png'))[1]
 root=tk.Tk(); root.withdraw(); root.update(); root.destroy()
 with tempfile.TemporaryDirectory() as folder:
     source=Path(folder)/'check.pdf'
@@ -90,6 +93,11 @@ with tempfile.TemporaryDirectory() as folder:
     with source.open('wb') as handle: writer.write(handle)
     assert len(list_pages(source))==1
     assert render_page(source,0)[0].width>0
+    scan=Path(folder)/'ocr-scan.pdf'
+    Image.open('assets/receiving_report.png').convert('RGB').save(scan,'PDF',resolution=288)
+    result=analyze_page(list_pages(scan)[0])
+    assert result.barcode=='THAEK12026124'
+    assert any(e.kind=='heading' for e in result.evidence)
 with sqlite3.connect(':memory:') as db: db.execute('SELECT 1')
 print('bundled_runtime_ok')
 '''

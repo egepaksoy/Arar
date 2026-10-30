@@ -34,6 +34,9 @@ from PIL import Image, ImageTk, _imagingtk
 from pypdf import PdfWriter, PdfReader
 import pypdfium2 as pdfium
 import pypdfium2_raw
+import tesserocr
+from arar.report_ocr import find_report_headings
+assert find_report_headings(Image.open(Path(sys.argv[1])/'assets/receiving_report.png'))[1]
 assert np.linalg.norm(np.array([3., 4.])) == 5.
 assert np.fft.fft(np.ones(8))[0] == 8
 image = Image.new('RGB', (8, 8), 'blue')

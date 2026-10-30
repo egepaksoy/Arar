@@ -1,0 +1,2 @@
+Version: 1.13.2
+Arguments: ['C:\\Users\\runneradmin\\AppData\\Local\\Temp\\cibw-run-p0jrdh1y\\cp312-win_amd64\\build\\venv\\Scripts\\delvewheel', 'repair', '-w', 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\cibw-run-p0jrdh1y\\cp312-win_amd64\\repaired_wheel', '-v', 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\cibw-run-p0jrdh1y\\cp312-win_amd64\\built_wheel\\tesserocr-2.12.0-cp312-cp312-win_amd64.whl']
