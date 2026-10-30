@@ -4,12 +4,13 @@ import unittest
 from unittest.mock import patch
 from local_dependencies import activate_local_dependencies
 activate_local_dependencies()
+import cv2
 import numpy as np
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject,NameObject,DecodedStreamObject
-from arar.barcodes import WIDTHS, read_barcodes
-from arar.detection import analyze_page, list_pages, render_page, _scan_stamps, _stamp_match, _classify_color
+from arar.barcodes import CODE39_RAW, WIDTHS, read_barcodes, read_code39_line
+from arar.detection import analyze_page, list_pages, render_page, _scan_stamps, _stamp_match, _classify_color, _color_stamps
 from arar.exporter import export_groups, safe_filename
 from arar.models import PageResult, DocumentGroup, DocumentContext, Settings, Evidence, build_groups, ROOT
 from arar.offline import local_path
@@ -356,6 +357,40 @@ class DetectionTests(unittest.TestCase):
         image=Image.open(ROOT/'assets/receiving_report.png')
         values=read_barcodes(image,2)
         self.assertEqual([v.value for v in values],['THAEK12026124'])
+
+    def test_soft_scan_barcode_with_any_number_is_read(self):
+        def soft_image(text,module=4,blur=2.0,dark=90):
+            row=[False]*module*10
+            for char in '*'+text+'*':
+                for index,mark in enumerate(CODE39_RAW[char]):
+                    row.extend([index%2==0]*round(module*(2.2 if mark.isupper() else 1)))
+                row.extend([False]*module)
+            row.extend([False]*module*10)
+            gray=np.where(np.tile(row,(80,1)),dark,235).astype('float32')
+            gray=cv2.GaussianBlur(gray,(0,0),blur)+np.random.default_rng(1).normal(0,3,gray.shape)
+            return Image.fromarray(np.clip(gray,0,255).astype('uint8'))
+        for text in ('THAEK12026196','THAEK12026201','AB-9.7'):
+            with self.subTest(text=text):
+                image=soft_image(text)
+                self.assertEqual([b.value for b in read_barcodes(image,4)],[text])
+        # The fixed-threshold line reader alone cannot decode this blur level.
+        line=np.asarray(soft_image('THAEK12026196').convert('L'))[40]<140
+        self.assertEqual(read_code39_line(line,40),[])
+
+    def test_scanned_blue_stamp_is_found_without_template_match(self):
+        page=np.full((1100,840,3),(240,238,250),np.uint8)  # Bluish scanner paper.
+        ink=(160,185,225)
+        cv2.circle(page,(500,700),22,ink,3)
+        cv2.putText(page,'QA-2',(485,695),cv2.FONT_HERSHEY_SIMPLEX,.4,ink,2)
+        cv2.putText(page,'025',(490,712),cv2.FONT_HERSHEY_SIMPLEX,.4,ink,2)
+        cv2.line(page,(100,200),(260,215),ink,3)  # Handwriting is long and sparse.
+        cv2.putText(page,'ABCDEFG',(100,400),cv2.FONT_HERSHEY_SIMPLEX,1,(40,40,45),2)
+        found=_color_stamps(Image.fromarray(page))
+        self.assertEqual([f.kind for f in found],['blue'])
+        left,top,right,bottom=[v*4 for v in found[0].box]
+        self.assertTrue(left<500<right and top<700<bottom)
+        page[:]=(240,238,250)
+        self.assertEqual(_color_stamps(Image.fromarray(page)),[])
 
     def test_code128_checksum_accepts_valid_and_rejects_corrupt(self):
         def image(symbols):

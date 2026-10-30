@@ -3,6 +3,7 @@
 The table below is the standard Code 128 symbol width table. Unsupported or
 damaged barcodes return no value, leaving the page for manual review.
 """
+import cv2
 import numpy as np
 from dataclasses import dataclass
 
@@ -41,10 +42,16 @@ class Barcode:
     kind: str = 'Code 128'
 
 
-def read_code39_line(line,y):
+def _bool_runs(line):
     edges = np.flatnonzero(np.r_[True,line[1:] != line[:-1],True])
-    runs = np.diff(edges)
-    bits = line[edges[:-1]]
+    return edges, np.diff(edges), line[edges[:-1]]
+
+
+def read_code39_line(line,y):
+    return _code39_runs(*_bool_runs(line),y)
+
+
+def _code39_runs(edges,runs,bits,y):
     result = []
     starts=np.flatnonzero(bits)
     starts=starts[starts+9<=len(runs)]
@@ -139,9 +146,10 @@ def _decode_values(values):
 
 
 def read_line(line, y=0):
-    changes = np.flatnonzero(np.r_[True, line[1:] != line[:-1], True])
-    lengths = np.diff(changes)
-    values_at = line[changes[:-1]]
+    return _code128_runs(*_bool_runs(line), y)
+
+
+def _code128_runs(changes, lengths, values_at, y):
     found = []
     starts=np.flatnonzero(values_at)
     starts=starts[starts+25<len(lengths)]
@@ -187,18 +195,75 @@ def read_line(line, y=0):
     return found
 
 
+def _gray_runs(row):
+    """Sub-pixel runs from gray levels, with edges at the steepest slopes.
+
+    Soft scans blur narrow bars much more than wide ones, so no single
+    threshold keeps bar and space widths even. The steepest point of each
+    transition stays at the true edge whatever the local contrast is.
+    """
+    row = cv2.GaussianBlur(row.astype(np.float32).reshape(1, -1), (0, 0), sigmaX=0.8).ravel()
+    if float(row.max() - row.min()) < 40:
+        return None
+    slope = np.gradient(row)
+    strength = float(np.percentile(np.abs(slope), 98))
+    if strength < 8:
+        return None
+    rising = np.flatnonzero((slope[1:-1] > slope[:-2]) & (slope[1:-1] >= slope[2:])) + 1
+    falling = np.flatnonzero((slope[1:-1] < slope[:-2]) & (slope[1:-1] <= slope[2:])) + 1
+    rising = rising[slope[rising] > strength * .12]
+    falling = falling[slope[falling] < -strength * .12]
+    if len(rising) + len(falling) < 24:
+        return None
+    position = np.r_[rising, falling]
+    is_rise = np.r_[np.ones(len(rising), bool), np.zeros(len(falling), bool)]
+    order = np.argsort(position)
+    edges = []  # (position, is_rise); consecutive edges must alternate.
+    for index in order:
+        at, rise = int(position[index]), bool(is_rise[index])
+        if edges and edges[-1][1] == rise:
+            if abs(slope[at]) > abs(slope[edges[-1][0]]):
+                edges[-1] = (at, rise)
+        else:
+            edges.append((at, rise))
+    if len(edges) < 24:
+        return None
+    at = np.array([e[0] for e in edges])
+    # Parabolic refinement of each slope peak.
+    before, here, after = np.abs(slope[at-1]), np.abs(slope[at]), np.abs(slope[np.minimum(at+1, len(row)-1)])
+    denominator = before - 2*here + after
+    shift = np.where(denominator < 0, .5*(before-after)/np.where(denominator < 0, denominator, -1), 0)
+    crossings = at + np.clip(shift, -.5, .5) + .5
+    edges_x = np.r_[0., crossings, float(len(row))]
+    # A rising edge leaves a dark run, a falling edge leaves a light one.
+    values = np.r_[not edges[0][1], [not rise for _, rise in edges]]
+    return edges_x, np.diff(edges_x), values
+
+
+def read_gray_line(row, y=0):
+    runs = _gray_runs(row)
+    if runs is None:
+        return []
+    return _code128_runs(*runs, y) + _code39_runs(*runs, y)
+
+
 def read_barcodes(image, stride=6):
     gray = np.asarray(image.convert('L'))
     found = []
     for y in range(0, gray.shape[0], stride):
         line = gray[y] < 140
-        if np.count_nonzero(line[1:] != line[:-1]) < 24:
-            continue
-        for candidate in read_line(line,y)+read_code39_line(line,y):
+        candidates = []
+        if np.count_nonzero(line[1:] != line[:-1]) >= 24:
+            candidates = read_line(line,y)+read_code39_line(line,y)
+        if not candidates:
+            # Rows of vertical bars agree, so averaging them removes scan noise.
+            rows = gray[max(0,y-3):y+4].mean(axis=0)
+            candidates = read_gray_line(rows,y)
+        for candidate in candidates:
             x0, _, x1, _ = candidate.box
             existing = next((b for b in found if b.value == candidate.value and
                              abs(b.box[0]-x0)<8 and abs(b.box[2]-x1)<8 and
-                             y-b.box[3] < stride*3), None)
+                             y-b.box[3] < max(stride*3,24)), None)
             if existing:
                 existing.box = (x0, existing.box[1], x1, y+1)
                 existing.score = min(existing.score,candidate.score)

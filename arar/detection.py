@@ -121,6 +121,44 @@ def _classify_color(image, *, faint_blue_as_blue=False):
     return 'black' if dark.sum()>=20 else 'none'
 
 
+def _color_stamps(full, cancel=None, *, faint_blue_as_blue=False):
+    """Blue stamp-sized ink blobs on a raster page, independent of templates.
+
+    Scans wash out stamp ink and tint the paper, so shape templates score low
+    even on a clear stamp. Ink is measured as blue excess over the paper tint,
+    and handwriting is rejected by shape (long and sparse).
+    """
+    scale=min(1.,840/full.width)
+    size=(max(1,round(full.width*scale)),max(1,round(full.height*scale)))
+    rgb=cv2.resize(np.asarray(full),size,interpolation=cv2.INTER_AREA).astype(np.float32)
+    chroma=rgb[:,:,2]-rgb[:,:,0]
+    excess=chroma-float(np.median(chroma))
+    mask=((excess>28)&(rgb.mean(axis=2)<236)).astype(np.uint8)
+    joined=cv2.dilate(mask,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(7,7)))
+    count,labels,stats,_=cv2.connectedComponentsWithStats(joined,connectivity=8)
+    page_width=size[0]
+    findings=[]
+    for index in range(1,count):
+        if cancel is not None and cancel.is_set():
+            return findings
+        x,y,width,height,_=stats[index]
+        if not .03*page_width<=width<=.3*page_width or not .6<=width/height<=1.8:
+            continue
+        ink=(labels[y:y+height,x:x+width]==index)&(mask[y:y+height,x:x+width]>0)
+        if ink.sum()<250*(page_width/840)**2 or not .08<=ink.sum()/(width*height)<=.5:
+            continue
+        strength=float(np.percentile(excess[y:y+height,x:x+width][ink],75))
+        kind='blue' if faint_blue_as_blue or strength>=42 else 'faint'
+        box=tuple(v/scale/4 for v in (x,y,x+width,y+height))
+        findings.append(Evidence(kind,box,min(.95,max(.5,strength/60)),'Renk tabanlı mühür bölgesi'))
+    return findings
+
+
+def _inside(box,outer):
+    return (outer[0]<=(box[0]+box[2])/2<=outer[2]
+            and outer[1]<=(box[1]+box[3])/2<=outer[3])
+
+
 def _box_pdf(bounds,height):
     left,bottom,right,top=bounds
     return (left,height-top,right,height-bottom)
@@ -357,8 +395,12 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
                 break
         if fallback or (result.index==0 and not targets and not evidence):
             small=full.resize((round(full.width/4*1.25),round(full.height/4*1.25)))
-            evidence.extend(_scan_stamps(small,1.25,cancel,min_score=scan_stamp_threshold,
-                                         faint_blue_as_blue=faint_blue_as_blue))
+            colored=_color_stamps(full,cancel,faint_blue_as_blue=faint_blue_as_blue)
+            scanned=_scan_stamps(small,1.25,cancel,min_score=scan_stamp_threshold,
+                                 faint_blue_as_blue=faint_blue_as_blue)
+            evidence.extend(colored)
+            evidence.extend(f for f in scanned
+                            if not any(_inside(f.box,c.box) for c in colored))
     # Deduplicate observations without choosing among different target numbers.
     if cancel is not None and cancel.is_set():
         return result
