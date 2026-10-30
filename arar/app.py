@@ -2,6 +2,7 @@
 from pathlib import Path
 from collections import OrderedDict
 from dataclasses import replace
+from datetime import datetime
 import queue
 import re
 import threading
@@ -12,7 +13,7 @@ from PIL import Image, ImageTk
 from .models import Settings, DocumentContext, ROOT, build_groups
 from .detection import analyze_page, list_pages, render_page
 from .offline import local_path
-from .scanning import (ScanStore, ScanWorker, archive_committed, decode_pages,
+from .scanning import (ScanStore, ScanWorker, approval_problem, archive_approved, archive_committed, decode_pages,
                        encode_pages, reserve_archive, write_archive)
 
 BG='#f3f6fb'
@@ -43,8 +44,13 @@ class ArarApp:
         self.scan_worker=ScanWorker(self.scan_store,self.events,replace(self.settings))
         self.scan_job_id=None
         self.scan_ids=[]
+        self.scan_problems={}
+        self.scans_open=True
+        self.scan_note=tk.StringVar()
+        self.scan_progress={}
         self.scan_auto_open=True
         self.watch_error=''
+        self.tick_failed=False
         self.watch_var=tk.StringVar()
         self.cancel=threading.Event()
         self.resume=threading.Event()
@@ -131,16 +137,62 @@ class ArarApp:
         self.settings_btn=ttk.Button(controls,text='Ayarlar',command=self.show_settings)
         self.settings_btn.pack(side='left',padx=(12,0))
 
-        scans=tk.Frame(toolbar,bg=BG)
+        scans=tk.Frame(toolbar,bg=WHITE,highlightbackground=LINE,highlightthickness=1)
         scans.grid(row=2,column=0,columnspan=2,sticky='ew',pady=(12,0))
-        self.scan_combo=ttk.Combobox(scans,state='readonly',width=42)
-        self.scan_combo.pack(side='left')
-        self.scan_open_btn=ttk.Button(scans,text='Taramayı incele',command=self.open_scan)
-        self.scan_open_btn.pack(side='left',padx=8)
-        self.scan_remove_btn=ttk.Button(scans,text='Listeden kaldır',command=self.remove_scan)
-        self.scan_remove_btn.pack(side='left',padx=(0,8))
-        self.scan_clear_btn=ttk.Button(scans,text='Listeyi temizle',command=lambda:self.remove_scan(clear_all=True))
-        self.scan_clear_btn.pack(side='left')
+        scans.grid_columnconfigure(0,weight=1)
+        header=tk.Frame(scans,bg=WHITE,cursor='hand2')
+        header.grid(row=0,column=0,sticky='ew')
+        self.scan_arrow=self.label(header,'▾',size=12,bold=True,color=MUTED,cursor='hand2')
+        self.scan_arrow.pack(side='left',padx=(14,6),pady=(6,4))
+        title=self.label(header,'OTOMATİK TARAMALAR',size=9,bold=True,color=MUTED,cursor='hand2')
+        title.pack(side='left',pady=(10,8))
+        self.scan_summary=self.label(header,'',size=9,color=MUTED,cursor='hand2')
+        self.scan_summary.pack(side='left',padx=14,pady=(10,8))
+        for widget in (header,self.scan_arrow,title,self.scan_summary):
+            widget.bind('<Button-1>',self._toggle_scans)
+        self.scan_body=tk.Frame(scans,bg=WHITE)
+        self.scan_body.grid(row=1,column=0,sticky='ew')
+        self.scan_body.grid_columnconfigure(0,weight=1)
+        scan_table=tk.Frame(self.scan_body,bg=WHITE)
+        scan_table.grid(row=0,column=0,sticky='ew',padx=(10,0),pady=(0,4))
+        scan_table.grid_columnconfigure(0,weight=1)
+        self.scan_tree=ttk.Treeview(scan_table,columns=('label','file','state','progress','save','added'),
+                                    show='headings',height=4,selectmode='extended')
+        for key,title_text,width,stretch in (('label','Tarama',80,False),('file','Dosya',200,True),
+                                             ('state','Durum',115,False),('progress','İlerleme',235,False),
+                                             ('save','Kayıt',135,False),('added','Eklenme',70,False)):
+            self.scan_tree.heading(key,text=title_text)
+            self.scan_tree.column(key,width=width,minwidth=60,stretch=stretch,anchor='w')
+        self.scan_tree.grid(row=0,column=0,sticky='ew')
+        scan_scroll=ttk.Scrollbar(scan_table,orient='vertical',command=self.scan_tree.yview)
+        scan_scroll.grid(row=0,column=1,sticky='ns')
+        self.scan_tree.configure(yscrollcommand=scan_scroll.set)
+        for state,color,background in (('queued',MUTED,WHITE),('analyzing',AMBER,'#fff6e5'),
+                                       ('review',GREEN,'#edf8f0'),('error',RED,'#fff0f0'),
+                                       ('exporting',AMBER,'#fff6e5')):
+            self.scan_tree.tag_configure(state,foreground=color,background=background)
+        self.scan_empty=tk.Label(scan_table,text='Bekleyen otomatik tarama yok',font=('Segoe UI',10),
+                                 fg=MUTED,bg=WHITE)
+        self.scan_tree.bind('<Double-1>',lambda event:self.open_scan())
+        self.scan_tree.bind('<Return>',lambda event:self.open_scan())
+        self.scan_tree.bind('<Control-a>',lambda event:(self.scan_tree.selection_set(self.scan_ids),'break')[1])
+        self.scan_tree.bind('<<TreeviewSelect>>',lambda event:self._update_scan_note())
+        self.scan_note_label=tk.Label(self.scan_body,textvariable=self.scan_note,font=('Segoe UI',9),fg=MUTED,bg=WHITE,
+                                      anchor='w',justify='left',wraplength=900)
+        self.scan_note_label.grid(row=1,column=0,sticky='ew',padx=14,pady=(0,10))
+        self.scan_body.bind('<Configure>',lambda event:self.scan_note_label.configure(wraplength=max(300,event.width-260)))
+        scan_buttons=tk.Frame(self.scan_body,bg=WHITE)
+        scan_buttons.grid(row=0,column=1,rowspan=2,sticky='n',padx=12,pady=(0,10))
+        self.scan_open_btn=ttk.Button(scan_buttons,text='Taramayı incele',style='Compact.TButton',command=self.open_scan)
+        self.scan_open_btn.pack(fill='x',pady=(0,5))
+        self.scan_approve_btn=ttk.Button(scan_buttons,text='Seçilenleri onayla ve kaydet',style='Primary.TButton',
+                                         command=self.approve_selected_scans)
+        self.scan_approve_btn.pack(fill='x',pady=(0,5))
+        self.scan_remove_btn=ttk.Button(scan_buttons,text='Listeden kaldır',style='Compact.TButton',command=self.remove_scan)
+        self.scan_remove_btn.pack(fill='x',pady=(0,5))
+        self.scan_clear_btn=ttk.Button(scan_buttons,text='Listeyi temizle',style='Compact.TButton',
+                                       command=lambda:self.remove_scan(clear_all=True))
+        self.scan_clear_btn.pack(fill='x')
         tk.Label(toolbar,textvariable=self.watch_var,font=('Segoe UI',9),fg=MUTED,bg=BG,
                  wraplength=1050,justify='left').grid(row=3,column=0,columnspan=2,sticky='w',pady=(4,0))
 
@@ -295,6 +347,8 @@ class ArarApp:
         export.grid(row=1,column=0,columnspan=2,sticky='ew',padx=16,pady=(10,16))
         self.output_label=self.label(export,'',size=9,color=MUTED,wraplength=254,anchor='w',justify='left')
         self.output_label.pack(fill='x',pady=(0,8))
+        self.export_note=self.label(export,'',size=9,color=MUTED,wraplength=254,anchor='w',justify='left')
+        self.export_note.pack(fill='x',pady=(0,8))
         self.export_btn=ttk.Button(export,text='Onayla ve kaydet',style='Primary.TButton',command=self.export)
         self.export_btn.pack(fill='x')
 
@@ -322,6 +376,7 @@ class ArarApp:
             for button in (self.add_btn,self.example_btn):
                 button.configure(state='disabled')
         self.scan_open_btn.configure(state=state)
+        self.scan_approve_btn.configure(state=state)
         self.scan_remove_btn.configure(state=state)
         self.scan_clear_btn.configure(state=state)
         self.analyze_btn.configure(state='normal' if self.pages and not value else 'disabled')
@@ -428,6 +483,7 @@ class ArarApp:
             job=self.scan_store.get(self.scan_job_id)
             if job and job['status'] in ('review','error'):
                 self.scan_store.update(self.scan_job_id,pages=encode_pages(self.pages),status='review')
+                self.scan_problems.pop(self.scan_job_id,None)
 
     def _scan_tick(self):
         self.scan_after=None
@@ -438,27 +494,134 @@ class ArarApp:
             if self.settings.auto_watch:
                 self.scan_worker.start()
             self._refresh_scan_queue()
-            if self.scan_auto_open and not self.pages and not self.busy and not self.root.grab_current():
+            # grab_current() looks the window up by name and fails for Tk's own
+            # combobox popdown, so ask Tk directly whether any grab is active.
+            if self.scan_auto_open and not self.pages and not self.busy and not self.root.tk.call('grab','current'):
                 self.open_scan(automatic=True)
+            if self.tick_failed:
+                self.tick_failed=False
+                self.watch_error=''
+                self._refresh_scan_queue()
         except Exception as exc:
-            self.watch_error=str(exc)
-            self.watch_var.set('İzleme hatası: '+str(exc))
+            self.tick_failed=True
+            self.watch_error=str(exc) or type(exc).__name__
+            self.watch_var.set('İzleme hatası: '+self.watch_error)
         self.scan_after=self.root.after(1000,self._scan_tick)
 
     def _refresh_scan_queue(self):
         jobs=self.scan_store.jobs(pending_only=True,include_pages=False)
         labels={'queued':'Sırada','analyzing':'Analiz ediliyor','review':'Onay bekliyor',
                 'error':'Kontrol gerekli','exporting':'Kaydediliyor'}
-        selected=self.scan_combo.current()
-        selected_id=self.scan_ids[selected] if 0<=selected<len(self.scan_ids) else None
+        tree=self.scan_tree
         self.scan_ids=[job['id'] for job in jobs]
-        self.scan_combo.configure(values=[f"{job['label']} • {Path(job['original']).name} • {labels[job['status']]}" for job in jobs])
+        self.scan_problems={job_id:value for job_id,value in self.scan_problems.items() if job_id in self.scan_ids}
+        for position,job in enumerate(jobs):
+            problem=self._scan_problem(job)
+            values=(job['label'],Path(job['original']).name,labels[job['status']],
+                    self._scan_progress_text(job),self._scan_save_text(job,problem),self._scan_added_text(job['created']))
+            if tree.exists(job['id']):
+                tree.item(job['id'],values=values,tags=(job['status'],))
+                if tree.index(job['id'])!=position:
+                    tree.move(job['id'],'',position)
+            else:
+                tree.insert('',position,iid=job['id'],values=values,tags=(job['status'],))
+        for item in tree.get_children():
+            if item not in self.scan_ids:
+                tree.delete(item)
         if self.scan_ids:
-            self.scan_combo.current(self.scan_ids.index(selected_id) if selected_id in self.scan_ids else 0)
+            self.scan_empty.place_forget()
+            if not self._selected_scan_ids():
+                tree.selection_set(self.scan_ids[0])
         else:
-            self.scan_combo.set('Bekleyen otomatik tarama yok')
+            self.scan_empty.place(in_=tree,relx=.5,rely=.5,anchor='center')
+        counts={status:sum(job['status']==status for job in jobs) for status in labels}
+        parts=[f"{counts[status]} {text}" for status,text in (('analyzing','analiz ediliyor'),('queued','sırada'),
+               ('review','onay bekliyor'),('error','kontrol gerekli'),('exporting','kaydediliyor')) if counts[status]]
+        self.scan_summary.configure(text=(f'{len(jobs)} işlem • '+' • '.join(parts)) if jobs else 'bekleyen tarama yok')
+        self._update_scan_note()
         state='İzleme açık' if self.settings.auto_watch else 'İzleme kapalı'
         self.watch_var.set(state+f' • {len(jobs)} bekleyen işlem'+(' • '+self.watch_error if self.watch_error else ''))
+
+    def _toggle_scans(self,event=None):
+        self.scans_open=not self.scans_open
+        if self.scans_open:
+            self.scan_body.grid()
+        else:
+            self.scan_body.grid_remove()
+        self.scan_arrow.configure(text='▾' if self.scans_open else '▸')
+
+    def _scan_problem(self,job):
+        """Why this scan cannot be saved as is ('' when it can); review scans are cached."""
+        if job['status']!='review':
+            return approval_problem(job['status'],[],self.settings.grouping,job['error'])
+        if job['id']==self.scan_job_id:  # Open scan: decisions are live in the workspace.
+            return approval_problem('review',self.pages,self.settings.grouping,reviewing=True)
+        if job['id'] not in self.scan_problems:
+            stored=self.scan_store.get(job['id'])
+            self.scan_problems[job['id']]=approval_problem('review',decode_pages(stored['pages']),
+                                                           self.settings.grouping) if stored else ''
+        return self.scan_problems[job['id']]
+
+    @staticmethod
+    def _scan_save_text(job,problem):
+        if not problem:
+            return '✓ Kaydedilebilir'
+        return {'review':'⚠ Önce inceleyin','error':'⚠ Önce inceleyin','exporting':'… Kaydediliyor'}.get(
+            job['status'],'… Analiz bitince')
+
+    def _update_scan_note(self):
+        selected=self._selected_scan_ids()
+        jobs={job['id']:job for job in self.scan_store.jobs(pending_only=True,include_pages=False)}
+        if not selected or any(job_id not in jobs for job_id in selected):
+            self.scan_note.set('Bir tarama seçin: kaydedilip kaydedilemeyeceğinin nedeni burada yazar. '
+                               'Doğrudan kaydedilebilenler için “Seçilenleri onayla ve kaydet”i kullanın.')
+            self.scan_note_label.configure(fg=MUTED)
+            return
+        problems=[(Path(jobs[job_id]['original']).name,self._scan_problem(jobs[job_id])) for job_id in selected]
+        blocked=[item for item in problems if item[1]]
+        if len(selected)==1:
+            name,problem=problems[0]
+            self.scan_note.set(f'{name}: '+(problem if problem else
+                'Kaydedilebilir. “Seçilenleri onayla ve kaydet” ile arşive yazabilir veya önce inceleyebilirsiniz.'))
+        else:
+            lines=[f'{len(selected)} tarama seçili: {len(selected)-len(blocked)} kaydedilebilir'
+                   +(f', {len(blocked)} atlanacak.' if blocked else '.')]
+            lines.extend(f'• {name}: {problem}' for name,problem in blocked[:3])
+            if len(blocked)>3:
+                lines.append(f'• … ve {len(blocked)-3} tarama daha')
+            self.scan_note.set('\n'.join(lines))
+        self.scan_note_label.configure(fg=AMBER if blocked else GREEN)
+
+    def _selected_scan_ids(self):
+        return [item for item in self.scan_tree.selection() if item in self.scan_ids]
+
+    def _selected_scan_id(self):
+        """The selected scan, or None unless exactly one is selected."""
+        selected=self._selected_scan_ids()
+        return selected[0] if len(selected)==1 else None
+
+    def _scan_progress_text(self,job):
+        done,total=self.scan_progress.get(job['id'],(0,0))
+        if job['status']=='analyzing' and total:
+            filled=round(10*done/total)
+            return '█'*filled+'░'*(10-filled)+f'  {done}/{total} (%{round(100*done/total)})'
+        if job['status']=='analyzing':
+            return '░'*10+'  başlıyor'
+        if job['status']=='review':
+            return '█'*10+'  analiz tamam'
+        if job['status']=='error':
+            return 'Analiz hatası; kontrol edin'
+        if job['status']=='exporting':
+            return 'Arşive yazılıyor'
+        return 'Sıra bekliyor'
+
+    @staticmethod
+    def _scan_added_text(created):
+        try:
+            moment=datetime.fromisoformat(created)
+        except ValueError:
+            return ''
+        return moment.strftime('%H:%M' if moment.date()==datetime.now(moment.tzinfo).date() else '%d.%m %H:%M')
 
     def open_scan(self,automatic=False):
         if self.busy:
@@ -467,17 +630,22 @@ class ArarApp:
         if automatic:
             job=next(iter(jobs),None)
         else:
-            index=self.scan_combo.current()
-            job_id=self.scan_ids[index] if 0<=index<len(self.scan_ids) else None
+            if len(self._selected_scan_ids())>1:
+                messagebox.showinfo('Tek tarama seçin','Birden fazla tarama seçili. İncelemek için tek bir tarama '
+                                    'seçin; çoklu seçim “Seçilenleri onayla ve kaydet” içindir.',parent=self.root)
+                return
+            job_id=self._selected_scan_id()
             job=next((job for job in jobs if job['id']==job_id),None)
         if not job:
             if not automatic:
-                self.status_var.set('Tarama analizinin tamamlanmasını bekleyin.')
+                self._explain_scan_not_ready()
             return
         job=self.scan_store.get(job['id'])
         if self.pages and not self.scan_job_id:
             if not automatic:
-                self.status_var.set('Taramayı açmak için önce mevcut çalışma alanını kaydedin veya temizleyin.')
+                text='Taramayı açmak için önce mevcut çalışma alanını kaydedin veya temizleyin.'
+                self.status_var.set(text)
+                messagebox.showinfo('Tarama açılamadı',text,parent=self.root)
             return
         self._save_scan_review()
         self.scan_job_id=job['id']
@@ -501,14 +669,86 @@ class ArarApp:
         if self.pages and self.pages[0].first_page_error:
             messagebox.showerror('İlk sayfa kontrolü',self.pages[0].reason,parent=self.root)
 
+    def _explain_scan_not_ready(self):
+        job_id=self._selected_scan_id()
+        job=next((job for job in self.scan_store.jobs(pending_only=True,include_pages=False)
+                  if job['id']==job_id),None)
+        if job is None:
+            text='İncelenecek tarama yok. Listeden bir tarama seçin.'
+        elif job['status']=='analyzing':
+            done,total=self.scan_progress.get(job['id'],(0,0))
+            text=('Bu tarama şu an analiz ediliyor'+(f' ({done}/{total} sayfa)' if total else '')+
+                  '. Analiz bitince listede “Onay bekliyor” görünür ve Taramayı incele ile açılabilir.')
+        elif job['status']=='queued':
+            text='Bu tarama analiz sırasında bekliyor. Sıra gelip analiz bitince Taramayı incele ile açılabilir.'
+        else:
+            text='Bu tarama şu an kaydediliyor; tamamlanınca listeden kalkar.'
+        self.status_var.set(text)
+        messagebox.showinfo('Tarama henüz hazır değil',text,parent=self.root)
+
+    def approve_selected_scans(self):
+        if self.busy:
+            return
+        ids=self._selected_scan_ids()
+        if not ids:
+            messagebox.showinfo('Tarama seçilmedi','Onaylamak için tabloda bir veya daha fazla tarama seçin. '
+                                'Ctrl veya Shift ile çoklu seçim yapabilir, Ctrl + A ile tümünü seçebilirsiniz.',
+                                parent=self.root)
+            return
+        try:
+            self.settings.validate_scan_paths()
+            archive_root=local_path(self.settings.archive_dir)
+        except (ValueError,OSError) as exc:
+            messagebox.showerror('Yerel klasör gerekli',str(exc),parent=self.root)
+            return
+        self._save_scan_review()
+        ready=[]
+        skipped=[]
+        for job_id in ids:
+            job=self.scan_store.get(job_id)
+            if not job:
+                continue
+            name=Path(job['original']).name
+            pages=decode_pages(job['pages']) if job['status']=='review' else []
+            problem=approval_problem(job['status'],pages,self.settings.grouping,job['error'])
+            if problem:
+                skipped.append(f'{name}: {problem}')
+            else:
+                ready.append((job,build_groups(pages,self.settings.grouping)[0]))
+        listing=lambda lines:'\n'.join('• '+line for line in lines[:12])+('\n• …' if len(lines)>12 else '')
+        if not ready:
+            messagebox.showinfo('Onaylanacak tarama yok','Seçilen taramalar doğrudan onaylanamıyor:\n\n'+listing(skipped),
+                                parent=self.root)
+            return
+        text=(f'{len(ready)} tarama, toplam {sum(len(groups) for _,groups in ready)} PDF olarak '
+              'tek tek açılmadan onaylanıp arşive kaydedilecek.')
+        if skipped:
+            text+=f'\n\nAtlanacak ({len(skipped)}):\n'+listing(skipped)
+        if not messagebox.askyesno('Seçili taramaları onayla',text+'\n\nDevam edilsin mi?',parent=self.root):
+            return
+        self._set_busy(True)
+        self.stop_btn.configure(state='disabled')
+        self.operation='export'
+        self.status_var.set(f'{len(ready)} tarama yerel arşive kaydediliyor…')
+        def work():
+            saved=[]
+            failed=[]
+            for job,groups in ready:
+                try:
+                    paths=archive_approved(self.scan_store,job,groups,archive_root)
+                    saved.append((job['id'],Path(job['original']).name,len(paths)))
+                except Exception as exc:
+                    failed.append(f"{Path(job['original']).name}: {exc}")
+            self.events.put(('batch_archived',saved,failed,skipped))
+        threading.Thread(target=work,daemon=True).start()
+
     def remove_scan(self,clear_all=False):
         if self.busy:
             return
         if clear_all:
             job_ids=[job['id'] for job in self.scan_store.jobs(pending_only=True,include_pages=False)]
         else:
-            selected=self.scan_combo.current()
-            job_ids=[self.scan_ids[selected]] if 0<=selected<len(self.scan_ids) else []
+            job_ids=self._selected_scan_ids()
         removed=self.scan_store.dismiss(job_ids)
         if self.scan_job_id in removed:
             self.clear_files()
@@ -743,7 +983,20 @@ class ArarApp:
         self.group_hint.configure(text=' '.join(hints) if hints else
                                   'Belge satırına çift tıklayarak sayfaları görün.')
         self.output_label.configure(text='Ana arşiv: '+self.settings.archive_dir)
-        self.export_btn.configure(state='normal' if groups and not unassigned and not self.busy else 'disabled')
+        problem=self._export_problem()
+        self.export_btn.configure(state='disabled' if problem else 'normal')
+        self.export_note.configure(text=problem or f'✓ Hazır: {len(groups)} PDF oluşacak. Onayla ve kaydet ile arşive yazabilirsiniz.',
+                                   fg=AMBER if problem else GREEN)
+
+    def _export_problem(self):
+        """Why the open workspace cannot be saved yet ('' when it can)."""
+        if self.operation=='export':
+            return 'Belgeler şu an kaydediliyor.'
+        if self.busy:
+            return 'Analiz sürüyor; bitince kaydedilebilir.'
+        if not self.pages:
+            return 'Henüz sayfa yok. PDF ekleyin veya bir tarama açın.'
+        return approval_problem('review',self.pages,self.settings.grouping,reviewing=True)
 
     def analyze(self):
         if self.busy or not self.pages:
@@ -873,7 +1126,8 @@ class ArarApp:
             return
         groups,unassigned=build_groups(self.pages,self.settings.grouping)
         if not groups or unassigned:
-            messagebox.showwarning('İnceleme tamamlanmadı','Tüm sayfalar bir belgeye atanmalı ve kapak kararları tamamlanmalı.')
+            messagebox.showwarning('İnceleme tamamlanmadı',self._export_problem() or
+                                   'Tüm sayfalar bir belgeye atanmalı ve kapak kararları tamamlanmalı.')
             return
         try:
             self.settings.validate_scan_paths()
@@ -1201,7 +1455,11 @@ class ArarApp:
                     self._refresh_scan_queue()
                 elif kind=='watch_status':
                     self.watch_error=event[1]
+                elif kind=='scan_progress':
+                    self.scan_progress[event[1]]=event[2:]
+                    self._refresh_scan_queue()
                 elif kind=='scan_ready':
+                    self.scan_problems.pop(event[1],None)
                     self._refresh_scan_queue()
                     job=self.scan_store.get(event[1])
                     if job and job['status'] in ('review','error') and not self.pages:
@@ -1210,6 +1468,23 @@ class ArarApp:
                     self._refresh_scan_queue()
                     if not self.pages and not self.busy:
                         self.status_var.set(f'{event[3]} PDF otomatik arşivlendi: '+event[2])
+                elif kind=='batch_archived':
+                    self._set_busy(False)
+                    saved,failed,skipped=event[1:]
+                    if self.scan_job_id in {job_id for job_id,_,_ in saved}:
+                        self.scan_job_id=None
+                        self.clear_files()
+                    self.scan_auto_open=True
+                    self._refresh_scan_queue()
+                    count=sum(pdfs for _,_,pdfs in saved)
+                    self.status_var.set(f'{len(saved)} tarama onaylandı, {count} PDF arşive kaydedildi: '+self.settings.archive_dir)
+                    lines=[f'{len(saved)} tarama onaylandı, {count} PDF kaydedildi.\n\n{self.settings.archive_dir}']
+                    if failed:
+                        lines.append('Kaydedilemeyen (incelemeye döndü):\n'+'\n'.join('• '+item for item in failed))
+                    if skipped:
+                        lines.append(f'Atlanan ({len(skipped)}) seçili taramalar listede bekliyor.')
+                    (messagebox.showwarning if failed else messagebox.showinfo)(
+                        'Seçili taramalar kaydedildi','\n\n'.join(lines),parent=self.root)
                 elif kind=='archived':
                     self._set_busy(False)
                     paths,job_id=event[1:]

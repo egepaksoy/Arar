@@ -8,9 +8,9 @@ from unittest.mock import patch
 from local_dependencies import activate_local_dependencies
 activate_local_dependencies()
 from pypdf import PdfReader, PdfWriter
-from arar.models import Settings, build_groups
+from arar.models import PageResult, Settings, build_groups
 from arar.scanning import (ScanStore, FolderWatcher, ScanWorker, decode_pages,
-                           encode_pages, reserve_archive, write_archive, archive_committed)
+                           approval_problem, encode_pages, reserve_archive, write_archive, archive_committed)
 
 
 class ScanTests(unittest.TestCase):
@@ -303,6 +303,58 @@ class ScanTests(unittest.TestCase):
             'canon_input_dir':str(self.incoming),'archive_dir':self.settings.archive_dir}),encoding='utf-8')
         with patch('arar.models.ROOT',self.root):
             self.assertEqual(Settings.load().input_dirs,[])
+
+
+class ApprovalProblemTests(unittest.TestCase):
+    def pages(self,*states):
+        return [PageResult('scan.pdf',index,barcode='REPORT' if state=='cover' else '',state=state)
+                for index,state in enumerate(states)]
+
+    def test_ready_scan_has_no_problem(self):
+        self.assertEqual(approval_problem('review',self.pages('cover','attachment'),'shared'),'')
+
+    def test_unfinished_statuses_explain_themselves(self):
+        for status in ('queued','analyzing','exporting'):
+            with self.subTest(status=status):
+                self.assertTrue(approval_problem(status,[],'shared'))
+        self.assertIn('Boom',approval_problem('error',[],'shared','Boom'))
+        self.assertNotIn('..',approval_problem('error',[],'shared','Boom.'))
+
+    def test_pages_waiting_for_a_decision_are_named(self):
+        text=approval_problem('review',self.pages('cover','review','attachment','review'),'shared')
+        self.assertIn('2 sayfa',text)
+        self.assertIn('2, 4',text)
+
+    def test_unanalyzed_and_numberless_cover_pages_have_their_own_messages(self):
+        self.assertIn('henüz analiz edilmedi',approval_problem('review',self.pages('pending','pending'),'shared'))
+        pages=self.pages('cover','attachment')
+        pages[0].barcode=''
+        self.assertIn('numarası yok',approval_problem('review',pages,'shared'))
+        pages[0].manual_barcode='MANUAL'
+        self.assertEqual(approval_problem('review',pages,'shared'),'')
+
+    def test_advice_points_at_the_panel_when_pages_are_already_open(self):
+        pages=self.pages('cover','review')
+        self.assertIn('Taramayı inceleyip',approval_problem('review',pages,'shared'))
+        text=approval_problem('review',pages,'shared',reviewing=True)
+        self.assertIn('sağdaki panelden',text)
+        self.assertNotIn('Taramayı',text)
+
+    def test_decided_first_page_error_no_longer_blocks(self):
+        pages=self.pages('review','attachment')
+        pages[0].first_page_error=True
+        self.assertIn('İlk sayfada',approval_problem('review',pages,'shared'))
+        pages[0].decision='cover'
+        pages[0].manual_barcode='MANUAL'
+        self.assertEqual(approval_problem('review',pages,'shared'),'')
+
+    def test_first_page_error_and_missing_cover_are_reported(self):
+        pages=self.pages('attachment','attachment')
+        self.assertIn('kapağa bağlanamadı',approval_problem('review',pages,'shared'))
+        self.assertIn('kapak sayfasını belirleyin',approval_problem('review',pages,'shared'))
+        self.assertIn('Kapak sayfası bulunamadı',approval_problem('review',[],'shared'))
+        pages[0].first_page_error=True
+        self.assertIn('İlk sayfada',approval_problem('review',pages,'shared'))
 
 
 if __name__=='__main__':

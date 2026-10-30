@@ -198,6 +198,241 @@ class DesktopTests(unittest.TestCase):
             self.root.update()
             self.assertEqual(Settings.load().input_dirs,[str(folders[0]),str(folders[3])])
 
+    def test_watch_tick_survives_foreign_grab_and_waits_for_it(self):
+        job_id=self._queued_scan()
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.app.scan_auto_open=True
+        popup=tk.Toplevel(self.root)
+        popup.grab_set()
+        try:
+            self.app._scan_tick()
+            self.assertEqual(self.app.watch_error,'')
+            self.assertIsNone(self.app.scan_job_id)  # Waits for the grab to end.
+        finally:
+            popup.grab_release()
+            popup.destroy()
+        self.app._scan_tick()
+        self.assertEqual(self.app.scan_job_id,job_id)
+
+    def test_scan_table_shows_progress_and_keeps_selection_across_refresh(self):
+        first=self._queued_scan()
+        second=self._queued_scan('second.pdf')
+        self.app.scan_store.update(second,status='analyzing')
+        self.app.clear_files()
+        self.app.events.put(('scan_progress',second,3,11))
+        self.pump_until(lambda:self.app.events.empty())
+        tree=self.app.scan_tree
+        self.assertEqual(list(tree.get_children()),[first,second])
+        values=tree.item(second,'values')
+        self.assertEqual(values[2],'Analiz ediliyor')
+        self.assertIn('3/11',values[3])
+        self.assertEqual(tree.item(first,'values')[2],'Onay bekliyor')
+        tree.selection_set(second)
+        self.app._refresh_scan_queue()
+        self.assertEqual(tree.selection(),(second,))
+        self.assertFalse(self.app.scan_empty.winfo_ismapped())
+        self.app.scan_clear_btn.invoke()
+        self.assertEqual(tree.get_children(),())
+        self.app.root.update()
+        self.assertTrue(self.app.scan_empty.winfo_ismapped())
+
+    def test_open_scan_explains_why_an_analyzing_scan_cannot_open(self):
+        job_id=self._queued_scan()
+        self.app.scan_store.update(job_id,status='analyzing')
+        self.app.clear_files()
+        self.app.events.put(('scan_progress',job_id,3,11))
+        self.pump_until(lambda:self.app.events.empty())
+        with patch('arar.app.messagebox.showinfo') as info:
+            self.app.open_scan()
+        info.assert_called_once()
+        self.assertIn('3/11',info.call_args.args[1])
+        self.assertIsNone(self.app.scan_job_id)
+
+    def test_double_click_on_ready_scan_opens_it(self):
+        job_id=self._queued_scan()
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        tree=self.app.scan_tree
+        self.root.update()
+        x,y,width,height=tree.bbox(job_id)
+        for _ in range(2):  # Two quick clicks make Tk report a double click.
+            for event in ('<ButtonPress-1>','<ButtonRelease-1>'):
+                tree.event_generate(event,x=x+10,y=y+height//2)
+        self.root.update()
+        self.assertEqual(self.app.scan_job_id,job_id)
+
+    def test_enter_on_ready_scan_opens_it(self):
+        job_id=self._queued_scan()
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.app.scan_tree.focus_force()
+        self.app.scan_tree.event_generate('<Return>')
+        self.root.update()
+        self.assertEqual(self.app.scan_job_id,job_id)
+
+    def _needs_decision_scan(self,name):
+        job_id=self._queued_scan(name)
+        from arar.scanning import decode_pages
+        pages=decode_pages(self.app.scan_store.get(job_id)['pages'])
+        pages[1].state='review'
+        self.app.scan_store.update(job_id,pages=encode_pages(pages))
+        return job_id
+
+    def test_selected_scans_are_approved_together_and_unready_ones_are_skipped(self):
+        first=self._queued_scan('a.pdf')
+        second=self._queued_scan('b.pdf')
+        blocked=self._needs_decision_scan('c.pdf')
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        archive=Path(self.temp.name)/'archive'
+        self.app.settings.archive_dir=str(archive)
+        self.app.scan_tree.selection_set([first,second,blocked])
+        with patch('arar.app.messagebox.askyesno',return_value=True) as ask, \
+                patch('arar.app.messagebox.showinfo') as info,patch('arar.app.messagebox.showwarning') as warning:
+            self.app.scan_approve_btn.invoke()
+            self.assertTrue(self.app.busy)
+            self.pump_until(lambda:not self.app.busy)
+        self.assertIn('2 tarama',ask.call_args.args[1])
+        self.assertIn('c.pdf',ask.call_args.args[1])
+        warning.assert_not_called()
+        info.assert_called_once()
+        store=self.app.scan_store
+        self.assertEqual([store.get(job)['status'] for job in (first,second,blocked)],['done','done','review'])
+        for job in (first,second):
+            folder=Path(store.get(job)['archive'])
+            self.assertTrue((folder/'REPORT.pdf').is_file())
+            self.assertTrue((folder/'Arar_onay.json').is_file())
+        self.assertEqual(self.app.scan_ids,[blocked])
+        self.assertTrue(Path(store.get(first)['original']).is_file())
+
+    def test_batch_approval_of_the_open_scan_closes_it(self):
+        first=self._queued_scan('a.pdf')
+        second=self._queued_scan('b.pdf')
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.app.scan_tree.selection_set(first)
+        self.app.open_scan()
+        self.app.settings.archive_dir=str(Path(self.temp.name)/'archive')
+        self.app.scan_tree.selection_set([first,second])
+        with patch('arar.app.messagebox.askyesno',return_value=True),patch('arar.app.messagebox.showinfo'):
+            self.app.scan_approve_btn.invoke()
+            self.pump_until(lambda:not self.app.busy)
+        self.assertIsNone(self.app.scan_job_id)
+        self.assertEqual(self.app.pages,[])
+        self.assertEqual(self.app.scan_ids,[])
+
+    def test_batch_approval_declined_or_empty_changes_nothing(self):
+        first=self._queued_scan('a.pdf')
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.app.settings.archive_dir=str(Path(self.temp.name)/'archive')
+        with patch('arar.app.messagebox.askyesno',return_value=False) as ask:
+            self.app.scan_tree.selection_set(first)
+            self.app.scan_approve_btn.invoke()
+        ask.assert_called_once()
+        self.assertEqual(self.app.scan_store.get(first)['status'],'review')
+        self.assertFalse(self.app.busy)
+        with patch('arar.app.messagebox.showinfo') as info:
+            self.app.scan_tree.selection_set(())
+            self.app.scan_approve_btn.invoke()
+        info.assert_called_once()
+        self.assertEqual(self.app.scan_store.get(first)['status'],'review')
+
+    def test_inspecting_with_several_scans_selected_asks_for_a_single_one(self):
+        first=self._queued_scan('a.pdf')
+        second=self._queued_scan('b.pdf')
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.app.scan_tree.selection_set([first,second])
+        with patch('arar.app.messagebox.showinfo') as info:
+            self.app.open_scan()
+        info.assert_called_once()
+        self.assertIsNone(self.app.scan_job_id)
+
+    def test_scan_section_collapses_on_header_click_and_restores(self):
+        self._queued_scan()
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.root.update()
+        self.assertTrue(self.app.scan_body.winfo_ismapped())
+        before=self.app.scan_tree.winfo_height()
+        self.app.scan_arrow.event_generate('<Button-1>')
+        self.root.update()
+        self.assertFalse(self.app.scan_body.winfo_ismapped())
+        self.assertEqual(self.app.scan_arrow.cget('text'),'▸')
+        self.assertIn('1 işlem',self.app.scan_summary.cget('text'))  # Summary stays visible.
+        self.app.scan_arrow.event_generate('<Button-1>')
+        self.root.update()
+        self.assertTrue(self.app.scan_body.winfo_ismapped())
+        self.assertEqual(self.app.scan_arrow.cget('text'),'▾')
+        self.assertEqual(self.app.scan_tree.winfo_height(),before)
+
+    def test_scan_table_and_note_say_why_a_scan_cannot_be_saved(self):
+        ready=self._queued_scan('a.pdf')
+        blocked=self._needs_decision_scan('b.pdf')
+        busy=self._queued_scan('c.pdf')
+        self.app.scan_store.update(busy,status='analyzing')
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        tree=self.app.scan_tree
+        self.assertEqual(tree.item(ready,'values')[4],'✓ Kaydedilebilir')
+        self.assertEqual(tree.item(blocked,'values')[4],'⚠ Önce inceleyin')
+        self.assertEqual(tree.item(busy,'values')[4],'… Analiz bitince')
+        tree.selection_set(ready)
+        self.root.update()
+        self.assertIn('Kaydedilebilir',self.app.scan_note.get())
+        tree.selection_set(blocked)
+        self.root.update()
+        self.assertIn('karar bekliyor',self.app.scan_note.get())
+        self.assertIn('b.pdf',self.app.scan_note.get())
+        tree.selection_set([ready,blocked,busy])
+        self.root.update()
+        note=self.app.scan_note.get()
+        self.assertIn('3 tarama seçili: 1 kaydedilebilir, 2 atlanacak',note)
+        self.assertIn('Analiz sürüyor',note)
+
+    def test_open_scan_decisions_update_its_saveable_state_live(self):
+        job_id=self._needs_decision_scan('a.pdf')
+        self.app.clear_files()
+        self.app._refresh_scan_queue()
+        self.assertEqual(self.app.scan_tree.item(job_id,'values')[4],'⚠ Önce inceleyin')
+        self.app.scan_tree.selection_set(job_id)
+        self.app.open_scan()
+        self.app.pages[1].decision='attachment'
+        self.app._refresh_scan_queue()
+        self.assertEqual(self.app.scan_tree.item(job_id,'values')[4],'✓ Kaydedilebilir')
+
+    def test_single_approval_note_explains_why_the_button_is_disabled(self):
+        app=self.app
+        app._refresh_summary()
+        self.assertEqual(str(app.export_btn.cget('state')),'disabled')
+        self.assertIn('henüz analiz edilmedi',app.export_note.cget('text'))
+        app.pages[0].state='review'
+        app.pages[1].state='attachment'
+        app._refresh_summary()
+        self.assertIn('karar bekliyor',app.export_note.cget('text'))
+        self.assertIn('sayfa 1',app.export_note.cget('text'))
+        app.pages[0].decision='cover'
+        app._refresh_summary()
+        self.assertIn('numarası yok',app.export_note.cget('text'))
+        app.pages[0].manual_barcode='REPORT'
+        app._refresh_summary()
+        self.assertEqual(str(app.export_btn.cget('state')),'normal')
+        self.assertIn('Hazır: 1 PDF',app.export_note.cget('text'))
+        app._set_busy(True)
+        self.assertIn('Analiz sürüyor',app.export_note.cget('text'))
+        self.assertEqual(str(app.export_btn.cget('state')),'disabled')
+        app._set_busy(False)
+        app.pages.clear()
+        app._refresh_summary()
+        self.assertIn('Henüz sayfa yok',app.export_note.cget('text'))
+
+    def test_export_warning_names_the_actual_problem(self):
+        with patch('arar.app.messagebox.showwarning') as warning:
+            self.app.export()
+        self.assertIn('henüz analiz edilmedi',warning.call_args.args[1])
+
     def test_incoming_scan_does_not_replace_review_and_manual_decisions_are_persistent(self):
         first=self._queued_scan()
         self.app.clear_files()
@@ -215,7 +450,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(self.app.pages[0].number,'USER')
         self.app.clear_files()
         self.app._refresh_scan_queue()
-        self.app.scan_combo.current(self.app.scan_ids.index(first))
+        self.app.scan_tree.selection_set(first)
         self.app.open_scan()
         self.assertEqual((self.app.pages[0].number,self.app.pages[0].decision),('USER','cover'))
 
@@ -234,10 +469,10 @@ class DesktopTests(unittest.TestCase):
         second=self._queued_scan('second.pdf')
         self.app.clear_files()
         self.app._refresh_scan_queue()
-        self.app.scan_combo.current(self.app.scan_ids.index(first))
+        self.app.scan_tree.selection_set(first)
         self.app.open_scan()
         self.root.update()
-        self.app.scan_combo.current(self.app.scan_ids.index(first))
+        self.app.scan_tree.selection_set(first)
         self.app.scan_remove_btn.invoke()
         self.assertEqual(self.app.scan_store.get(first)['status'],'dismissed')
         self.assertEqual(self.app.pages,[])

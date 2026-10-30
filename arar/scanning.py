@@ -267,9 +267,10 @@ class ScanWorker:
         pages=decode_pages(job['pages'])
         context=DocumentContext()
         try:
-            for page in pages:
+            for number,page in enumerate(pages):
                 if self.interrupted(job):
                     return
+                self.events.put(('scan_progress',job['id'],number,len(pages)))
                 analyze_page(page,self.stop,stamp_threshold=settings.stamp_threshold/100,
                              scan_stamp_threshold=settings.scan_stamp_threshold/100,
                              review_other_barcodes=settings.review_other_barcodes,
@@ -359,6 +360,69 @@ def write_archive(groups,folder,job_id,original='',*,automatic=False):
         temporary.unlink(missing_ok=True)
         for path in created:
             path.unlink(missing_ok=True)
+        raise
+
+
+def approval_problem(status,pages,grouping,error='',*,reviewing=False):
+    """Why a scan cannot be saved as is; '' when it can.
+
+    reviewing: the pages are already open in the workspace, so the advice
+    points at the right-hand panel instead of at opening the scan.
+    """
+    go='Sayfaları seçip sağdaki panelden' if reviewing else 'Taramayı inceleyip'
+    if status!='review':
+        return {'queued':'Analiz sırası bekleniyor; analiz bitince kaydedilebilir.',
+                'analyzing':'Analiz sürüyor; bitince kaydedilebilir.',
+                'error':'Analiz hatası'+(': '+error.strip().rstrip('.') if error.strip() else '')+'. Taramayı inceleyin.',
+                'exporting':'Şu an kaydediliyor.'}.get(status,'Bu durumda kaydedilemez.')
+    # A first-page error is settled once the user has decided that page.
+    if any(page.first_page_error and not page.decision for page in pages):
+        return ('İlk sayfada Receiving Report No ve mühür bulunamadı. '+
+                ('İlk sayfaya sağdaki panelden karar verin.' if reviewing else 'Taramayı inceleyin.'))
+    groups,unassigned=build_groups(pages,grouping)
+    def listed(items):
+        return ', '.join(str(page.index+1) for page in items[:8])+(' …' if len(items)>8 else '')
+    unassigned_in=lambda *states:[page for page in unassigned if page.effective_state in states]
+    if unassigned_in('pending'):
+        items=unassigned_in('pending')
+        return f'{len(items)} sayfa henüz analiz edilmedi (sayfa {listed(items)}). Analizin bitmesini bekleyin.'
+    if unassigned_in('review'):
+        items=unassigned_in('review')
+        return f'{len(items)} sayfa karar bekliyor (sayfa {listed(items)}). {go} karar verin.'
+    if unassigned_in('cover'):
+        items=unassigned_in('cover')
+        return (f'{len(items)} kapak sayfasında Receiving Report numarası yok (sayfa {listed(items)}). '
+                f'{go} numarayı girin.')
+    if unassigned:
+        return (f'{len(unassigned)} devam sayfası bir kapağa bağlanamadı (sayfa {listed(unassigned)}). '
+                f'{go} kapak sayfasını belirleyin.')
+    if not groups:
+        return 'Kapak sayfası bulunamadı. '+('Bir sayfayı kapak olarak işaretleyin.' if reviewing else 'Taramayı inceleyin.')
+    return ''
+
+
+def archive_approved(store,job,groups,archive_root):
+    """Archive one reviewed scan; returns the written PDFs.
+
+    Mirrors the single-scan approval: a finished on-disk commit is never
+    treated as pending again, and a failed write returns the scan to review.
+    """
+    folder=reserve_archive(archive_root,job['label'])
+    if not store.transition(job['id'],('review',),'exporting',archive=str(folder)):
+        folder.rmdir()
+        raise ValueError('Tarama artık onay bekleyen durumda değil.')
+    try:
+        paths=write_archive(groups,folder,job['id'],job['original'])
+        store.finish(job)
+        return paths
+    except Exception as exc:
+        if archive_committed(folder,job['id']):
+            store.finish(job)
+            return sorted(path for path in folder.glob('*.pdf'))
+        try:
+            store.update(job['id'],status='review',error=str(exc))
+        except Exception:
+            pass  # Keep exporting state for startup recovery.
         raise
 
 

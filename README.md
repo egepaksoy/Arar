@@ -156,8 +156,22 @@ Yazım sürüyorsa veya PDF açılamıyorsa tekrar beklenir; durum izleme satır
 Arşivdeki sonuçlar girişe taşınmamalıdır.
 
 Mühür/barkod analizi arka planda sırayla yapılır. Yeni taramalar mevcut incelemenin
-sayfalarını veya kararlarını değiştirmez. Üstteki tarama listesinden **Taramayı incele**
-ile onay bekleyen bir işlemi açın. İlk uygun işlem, çalışma alanı boşsa otomatik açılır.
+sayfalarını veya kararlarını değiştirmez. Üstteki **Otomatik taramalar** tablosunda her işlem
+dosya adı, renkli durum, analiz ilerlemesi (sayfa sayısı ve yüzde) ve eklenme zamanıyla görünür.
+Onay bekleyen bir işlemi seçip **Taramayı incele**ye basın veya satıra çift tıklayın.
+Tabloda Ctrl veya Shift ile birden fazla tarama seçebilir (Ctrl + A tümünü seçer),
+**Seçilenleri onayla ve kaydet** ile tek seferde, tek tek açmadan arşive kaydedebilirsiniz.
+Yalnızca karar bekleyen sayfası olmayan, onay bekleyen taramalar kaydedilir; diğerleri
+atlanır, nedenleriyle birlikte onay penceresinde listelenir ve tabloda beklemeye devam eder.
+Tablodaki **Kayıt** sütunu her taramanın doğrudan kaydedilip kaydedilemeyeceğini gösterir
+(✓ Kaydedilebilir, ⚠ Önce inceleyin, … Analiz bitince). Tablonun altındaki not, seçili
+taramalar için tam nedeni yazar; örneğin “2 sayfa karar bekliyor (sayfa 1, 2)”. Açık
+taramadaki kararlarınız Kayıt sütununa anında yansır. Sağ paneldeki tekli **Onayla ve kaydet**
+düğmesinin üstünde de aynı kurala göre bir not bulunur: kaydedilemiyorsa nedeni (ör. “2 sayfa karar
+bekliyor (sayfa 3, 4)”), kaydedilebiliyorsa kaç PDF oluşacağı yazar. **OTOMATİK TARAMALAR** başlığına
+tıklayarak bölümü kapatabilir (başlıkta özet kalır) ve yeniden tıklayarak eski görünümüne döndürebilirsiniz.
+İlk uygun işlem, çalışma alanı boşsa otomatik açılır. Analizi süren işlem henüz açılamaz;
+bunun nedeni ve ilerleme bir pencerede gösterilir.
 Elle eklenmiş PDF’ler varsa önce o çalışma alanını kaydedin veya temizleyin.
 Otomatik işlem açıkken başka kaynak ekleme kapalıdır; **Dosyaları temizle** incelemeyi
 kapatır, işlemi ve kararlarını tarama sırasından silmez. Otomatik analiz tamamlanınca
