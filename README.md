@@ -314,8 +314,8 @@ ayrıca devam eder.
 PDF’lerde kullanılır. Sayfa her iki durumda da tek görüntü olarak incelenir; yöntem
 PDF’nin yapısına göre otomatik seçilir.
 
-Önizlemede her mühür kutusunun üstünde (sayfanın üst kenarındaysa altında) bir sayı
-yazar: bu mühürün hâlâ bulunduğu en yüksek eşik değeridir. Eşik bu sayıya eşit veya
+Önizlemede her mühür kutusunun üstünde (sayfanın üst kenarındaysa altında) %72 gibi
+bir değer yazar: bu mühürün hâlâ bulunduğu en yüksek eşik değeridir. Eşik bu sayıya eşit veya
 düşükse mühür bulunur, yüksekse bulunmaz. Yanlış bulunan bir mühürün sayısından biraz
 yüksek bir eşik seçerek ayarı kalibre edebilirsiniz.
 

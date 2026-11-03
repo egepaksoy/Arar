@@ -880,7 +880,7 @@ class ArarApp:
                     # above the box, or below it at the top edge of the page.
                     above=top-3>y+12
                     self.canvas.create_text((left+right)/2,top-3 if above else bottom+3,
-                                            text=str(round(item.confidence*100)),fill=color,
+                                            text='%'+str(round(item.confidence*100)),fill=color,
                                             anchor='s' if above else 'n',font=('Segoe UI',9,'bold'))
         self.canvas.xview_moveto(max(0,min((area_w-width)/area_w,(x+point[0]*w-anchor[0])/area_w)))
         self.canvas.yview_moveto(max(0,min((area_h-height)/area_h,(y+point[1]*h-anchor[1])/area_h)))
