@@ -13,7 +13,7 @@ import uuid
 
 from .detection import analyze_page, list_pages
 from .exporter import export_groups, safe_filename
-from .models import DocumentContext, Evidence, PageResult, ROOT, build_groups
+from .models import Evidence, PageResult, ROOT, apply_stamp_rule, build_groups
 from .offline import local_path
 
 
@@ -265,7 +265,6 @@ class ScanWorker:
             return
         self.events.put(('scan_queue',))
         pages=decode_pages(job['pages'])
-        context=DocumentContext()
         try:
             for number,page in enumerate(pages):
                 if self.interrupted(job):
@@ -273,18 +272,16 @@ class ScanWorker:
                 self.events.put(('scan_progress',job['id'],number,len(pages)))
                 analyze_page(page,self.stop,stamp_threshold=settings.stamp_threshold/100,
                              scan_stamp_threshold=settings.scan_stamp_threshold/100,
-                             review_other_barcodes=settings.review_other_barcodes,
                              review_missing_stamp=settings.review_missing_stamp,
                              faint_blue_as_blue=settings.faint_blue_as_blue)
                 if self.interrupted(job):
                     return
-                context.apply(page,settings)
-                context.record(page)
+                apply_stamp_rule(page)
                 if page.first_page_error:
                     break
             if self.interrupted(job):
                 return
-            groups,unassigned=build_groups(pages,settings.grouping)
+            groups,unassigned=build_groups(pages)
             if settings.auto_save_scans and groups and not unassigned and not any(page.first_page_error for page in pages):
                 self.auto_archive(job,pages,groups,settings)
                 return
@@ -363,7 +360,7 @@ def write_archive(groups,folder,job_id,original='',*,automatic=False):
         raise
 
 
-def approval_problem(status,pages,grouping,error='',*,reviewing=False):
+def approval_problem(status,pages,error='',*,reviewing=False):
     """Why a scan cannot be saved as is; '' when it can.
 
     reviewing: the pages are already open in the workspace, so the advice
@@ -379,7 +376,7 @@ def approval_problem(status,pages,grouping,error='',*,reviewing=False):
     if any(page.first_page_error and not page.decision for page in pages):
         return ('İlk sayfada Receiving Report No ve mühür bulunamadı. '+
                 ('İlk sayfaya sağdaki panelden karar verin.' if reviewing else 'Taramayı inceleyin.'))
-    groups,unassigned=build_groups(pages,grouping)
+    groups,unassigned=build_groups(pages)
     # Pages are named by their ID: the 1..n position shown in the page list,
     # which stays unique when several PDFs are open together.
     ids={id(page):number for number,page in enumerate(pages,1)}

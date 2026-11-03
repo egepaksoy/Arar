@@ -14,7 +14,7 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - Mavi, siyah, soluk/renksiz ve birden fazla mühür türü için kapak değerlendirmesi.
 - **Analiz sürerken tamamlanan sayfaları inceleme ve kullanıcı kararı verme.** Arka plandaki sonuçlar manuel kararları değiştirmez.
 - İşlenen sayfalarda yeşil tik, kullanıcı incelemesi gerekenlerde kırmızı işaret.
-- Sırayla gruplama veya art arda kapaklara ortak devam sayfalarını ekleme.
+- Her yeni kapakla yeni bir belge başlatma; devam sayfaları bir sonraki kapağa kadar o belgeye eklenir.
 - Eklenip kaldırılabilen birden fazla yerel PDF klasörünü izleme, otomatik analiz ve kalıcı onay sırası.
 - İnceleme gerekmeyen otomatik taramaları ayara bağlı arşivleme, tarama listesinden tek tek veya topluca kaldırma.
 - Kapak işaretleme onay sorusunu ayarlardan açma veya kapatma.
@@ -228,25 +228,21 @@ dosya açıldığında hata gösterilir. Diğer taramalar sırada işlenebilir.
 
 ## Sayfa kararları ve ayarlar
 
-**Ayarlar → İşlem ayarları → Barkod incelemesi** bölümündeki
-**Receiving Report olmadan başka barkod bulunursa incelemeye al** seçeneği
-varsayılan olarak açıktır. Kapatıldığında bu sayfalar devam sayfası adayı olur.
+Receiving Report barkodu olmayan sayfalarda başka barkodlar bulunsa da sayfa
+incelemeye alınmaz, devam sayfası olur; bulunan barkodlar yalnızca raporlanır.
 Analiz sırasında “Devam edilsin mi?” veya otomatik kapak onayı penceresi açılmaz.
 Yalnızca PDF’nin ilk sayfasında hem Receiving Report barkodu hem de herhangi bir
 mühür bulunamazsa hata gösterilir ve analiz durdurulur; sonraki sayfalar işlenmez.
 Diğer incelemeler sağdaki panelden yapılır; analiz bu kararları beklemeden devam eder.
 Önceden verilen manuel kapak onayı korunur.
 
-**Ayarlar → Mühür kararları** bölümünde karışık (mavi + siyah/soluk) ve yalnızca
-renksiz (siyah/soluk) mühürler için iki aşamada ayrı inceleme seçenekleri bulunur:
+Mavi olmayan mühürlü Receiving Report sayfaları, sayfanın PDF içindeki konumundan
+bağımsız olarak şöyle değerlendirilir:
 
-- Araya devam sayfası girmeden önce: iki inceleme seçeneği de varsayılan olarak açıktır.
-- Araya devam sayfası girdikten sonra: iki inceleme seçeneği de varsayılan olarak kapalıdır;
-  ilgili Receiving Report sayfası otomatik devam sayfası olur.
+- Mavi ile birlikte renksiz (siyah/soluk) mühür varsa sayfa sağdaki panelde incelemeye alınır.
+- Yalnızca renksiz (siyah/soluk) mühür varsa sayfa otomatik olarak devam sayfası olur.
 
-Seçenekler açıkken sayfa sağdaki panelde inceleme bekler; onay penceresi açılmaz
-ve sonraki sayfalar işlenmeye devam eder. Konum her kaynak PDF için ayrı değerlendirilir.
-İlk sayfada hem barkod hem mühür bulunamaması kontrolü bu seçeneklerden bağımsızdır.
+İnceleme bekleyen sayfa için onay penceresi açılmaz; sonraki sayfalar işlenmeye devam eder.
 
 **Ayarlar → Mühür kararları → Soluk mavi mühürleri mavi olarak işle** seçeneği
 varsayılan olarak kapalıdır. Açıldığında mavi renk içeren soluk mühürler de mavi
@@ -256,11 +252,9 @@ eşleşme eşiğini geçmesi gerekir. Receiving Report barkodu ile yalnızca bu 
 varsa sayfa kapak olabilir; ayrıca siyah mühür varsa karışık mühür kuralları uygulanır.
 Seçim kaydedilir. Değişiklikten sonra analizi yeniden başlatın.
 
-Yalnızca mavi mühür tespit edilen Receiving Report sayfaları kapaktır. 3. maddeye
-uygun **ortak devam sayfaları** gruplaması varsayılandır: art arda gelen kapakların
-ardındaki belgeler her kapağın PDF’sine eklenir. Eski ayarlardaki sıralı gruplama,
-bu kurallara geçişte bir kez ortak gruplamaya alınır; sonrasında ayarlardan açıkça
-yapılan gruplama seçimi korunur.
+Yalnızca mavi mühür tespit edilen Receiving Report sayfaları kapaktır. Her kapak yeni
+bir PDF başlatır; ardından gelen devam sayfaları bir sonraki kapağa kadar bu PDF’ye
+eklenir. Art arda gelen kapakların her biri ayrı belge olur.
 
 **Örnekleri aç** için **Ayarlar → Örnek dosyalar → Klasör seç** ile yerel bir
 klasör seçip ayarları kaydedin. Alt klasörler de aranır. Klasör seçilmemişse ayarlara
@@ -325,8 +319,8 @@ seçimi temizlenir ve kayıt klasörü varsayılan `Çıktı` konumuna döner.
 
 **Ayarlar → Mühür doğruluğu → Mühür bulunamazsa kullanıcı incelemesine al** seçeneği
 varsayılan olarak açıktır. Kapatılırsa Receiving Report bulunan ama mühür bulunmayan
-sayfalar devam sayfası adayı olur. Siyah/soluk/karışık mühürler **Mühür kararları**
-sekmesindeki konum kurallarıyla değerlendirilir. İlk sayfada hem barkod hem mühür
+sayfalar devam sayfası adayı olur. Siyah/soluk/karışık mühürler yukarıdaki sabit
+kurallarla değerlendirilir. İlk sayfada hem barkod hem mühür
 bulunamaması kontrolü devam eder.
 Ayar kaydedilir; değişiklikten sonra analizi yeniden başlatın.
 

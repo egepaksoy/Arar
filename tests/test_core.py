@@ -13,7 +13,7 @@ from arar.barcodes import CODE39_RAW, WIDTHS, read_barcodes, read_code39_line
 from arar.detection import analyze_page, list_pages, render_page
 from arar.stamps import Stamp
 from arar.exporter import export_groups, safe_filename
-from arar.models import PageResult, DocumentGroup, DocumentContext, Settings, Evidence, build_groups, ROOT
+from arar.models import PageResult, DocumentGroup, Settings, Evidence, apply_stamp_rule, build_groups, ROOT
 from arar.offline import local_path
 
 EXAMPLES_AVAILABLE=all((ROOT/'Örnek/Kolay'/f'Örnek-{i}.pdf').is_file() for i in (1,3,4,6,9))
@@ -29,13 +29,13 @@ class SettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
             settings_dir=Path(folder)/'.arar'
             settings_dir.mkdir()
-            (settings_dir/'settings.json').write_text('{"grouping":"shared"}',encoding='utf-8')
+            # Keys of removed settings are ignored.
+            (settings_dir/'settings.json').write_text('{"grouping":"shared","review_other_barcodes":true}',encoding='utf-8')
             settings=Settings.load()
-            self.assertEqual(settings.grouping,'shared')
+            self.assertFalse(hasattr(settings,'grouping'))
             self.assertTrue(settings.confirm_cover)
             self.assertTrue(settings.notify_analysis_done)
             self.assertEqual((settings.stamp_threshold,settings.scan_stamp_threshold),(85,74))
-            self.assertTrue(settings.review_other_barcodes)
             self.assertTrue(settings.review_missing_stamp)
             self.assertFalse(settings.faint_blue_as_blue)
             self.assertEqual(settings.examples_dir,'')
@@ -70,9 +70,9 @@ class StampThresholdSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
             directory=Path(folder)/'.arar'
             directory.mkdir()
-            (directory/'settings.json').write_text('{"grouping":"shared","stamp_threshold":0,"scan_stamp_threshold":"invalid"}',encoding='utf-8')
+            (directory/'settings.json').write_text('{"confirm_cover":false,"stamp_threshold":0,"scan_stamp_threshold":"invalid"}',encoding='utf-8')
             loaded=Settings.load()
-            self.assertEqual(loaded.grouping,'shared')
+            self.assertFalse(loaded.confirm_cover)
             self.assertEqual((loaded.stamp_threshold,loaded.scan_stamp_threshold),(85,74))
 
 
@@ -93,17 +93,16 @@ class GroupingTests(unittest.TestCase):
 
     def test_sequential_boundaries_and_preserved_order(self):
         pages=[page(0,'cover',number='A'),page(1),page(2,'cover',number='B'),page(3)]
-        groups,left=build_groups(pages,'sequential')
+        groups,left=build_groups(pages)
         self.assertFalse(left)
         self.assertEqual([[p.index for p in g.pages] for g in groups],[[0,1],[2,3]])
 
-    def test_shared_adjacent_covers_and_next_batch(self):
+    def test_each_cover_starts_its_own_document(self):
         pages=[page(0,'cover',number='A'),page(1,'cover',number='B'),page(2),page(3),
                page(4,'cover',number='C'),page(5)]
-        groups,left=build_groups(pages,'shared')
+        groups,left=build_groups(pages)
         self.assertFalse(left)
-        self.assertEqual([[p.index for p in g.pages] for g in groups],[[0,2,3],[1,2,3],[4,5]])
-
+        self.assertEqual([[p.index for p in g.pages] for g in groups],[[0],[1,2,3],[4,5]])
     def test_review_blocks_following_assignment_until_decision(self):
         pages=[page(0,'cover',number='A'),page(1,'review'),page(2)]
         groups,left=build_groups(pages)
@@ -127,52 +126,23 @@ class GroupingTests(unittest.TestCase):
 
 
 class ContextRuleTests(unittest.TestCase):
-    def test_nonblue_stamp_decisions_follow_position_and_each_setting(self):
-        for stamp in ('mixed','black','faint'):
-            with self.subTest(stamp=stamp):
-                settings=Settings()
-                context=DocumentContext()
-                initial=PageResult('one.pdf',1,barcode='A',target_found=True,stamp=stamp,state='review')
-                self.assertTrue(context.apply(initial,settings))
-                self.assertEqual(initial.state,'review')
-                context.record(PageResult('one.pdf',2,state='attachment'))
-                late=PageResult('one.pdf',3,barcode='B',target_found=True,stamp=stamp,state='review')
-                self.assertFalse(context.apply(late,settings))
-                self.assertEqual(late.state,'attachment')
-                kind='mixed' if stamp=='mixed' else 'plain'
-                setattr(settings,'review_later_'+kind,True)
-                self.assertTrue(context.apply(late,settings))
-                self.assertEqual(late.state,'review')
-                setattr(settings,'review_initial_'+kind,False)
-                other=PageResult('other.pdf',1,barcode='C',target_found=True,stamp=stamp,state='review')
-                self.assertFalse(context.apply(other,settings))
-                self.assertEqual(other.state,'attachment')
-                self.assertFalse(context.after_noncover)
-
-    def test_old_grouping_migrates_once_and_explicit_new_choice_persists(self):
-        with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
-            directory=Path(folder)/'.arar'
-            directory.mkdir()
-            (directory/'settings.json').write_text('{"grouping":"sequential"}',encoding='utf-8')
-            loaded=Settings.load()
-            self.assertEqual(loaded.grouping,'shared')
-            loaded.grouping='sequential'
-            loaded.save()
-            self.assertEqual(Settings.load().grouping,'sequential')
+    def test_mixed_stamps_need_review_and_plain_stamps_follow_anywhere(self):
+        for stamp,state,review in (('mixed','review',True),('black','attachment',False),('faint','attachment',False)):
+            for index in (1,5):   # before and after a following page: the same rule
+                with self.subTest(stamp=stamp,index=index):
+                    result=PageResult('one.pdf',index,barcode='A',target_found=True,stamp=stamp,state='review')
+                    self.assertEqual(apply_stamp_rule(result),review)
+                    self.assertEqual(result.state,state)
+        blue=PageResult('one.pdf',1,barcode='A',target_found=True,stamp='blue',state='cover')
+        self.assertFalse(apply_stamp_rule(blue))
+        self.assertEqual(blue.state,'cover')
 
     @unittest.skipUnless((ROOT/'Örnek/Orta/Örnek-9.pdf').is_file(),'Yerel Orta Örnek-9 bulunamadı.')
-    def test_orta_example_9_page_5_becomes_attachment_after_documents(self):
-        context=DocumentContext()
-        settings=Settings()
-        pages=list_pages(ROOT/'Örnek/Orta/Örnek-9.pdf')
-        for result in pages[:5]:
-            analyze_page(result)
-            context.apply(result,settings)
-            context.record(result)
-        self.assertEqual((pages[4].stamp,pages[4].state),('mixed','attachment'))
-        self.assertTrue(pages[4].target_found)
-
-
+    def test_orta_example_9_mixed_report_page_needs_review(self):
+        result=analyze_page(list_pages(ROOT/'Örnek/Orta/Örnek-9.pdf')[4])
+        apply_stamp_rule(result)
+        self.assertEqual((result.stamp,result.state),('mixed','review'))
+        self.assertTrue(result.target_found)
 class DetectionTests(unittest.TestCase):
     def test_later_raster_page_without_report_still_checks_stamps(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -213,8 +183,8 @@ class DetectionTests(unittest.TestCase):
             with source.open('wb') as handle:
                 writer.write(handle)
             pages=list_pages(source)
-            first=analyze_page(pages[0],review_other_barcodes=False,review_missing_stamp=False)
-            second=analyze_page(pages[1],review_other_barcodes=False)
+            first=analyze_page(pages[0],review_missing_stamp=False)
+            second=analyze_page(pages[1])
             self.assertTrue(first.first_page_error)
             self.assertEqual(first.state,'review')
             self.assertFalse(second.first_page_error)
@@ -224,7 +194,7 @@ class DetectionTests(unittest.TestCase):
             self.assertFalse(stamp_only.first_page_error)
             self.assertEqual(stamp_only.stamp,'blue')
 
-    def test_other_barcodes_can_skip_review_but_first_page_check_remains(self):
+    def test_other_barcodes_never_need_review_but_first_page_check_remains(self):
         symbols=[104,33,34,(104+33+2*34)%103,106]
         row=[False]*30
         color=True
@@ -236,15 +206,11 @@ class DetectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             source=Path(folder)/'barcode.pdf'
             image.save(source,'PDF',resolution=144,quality=100,save_all=True,append_images=[image])
-            first=analyze_page(list_pages(source)[0],review_other_barcodes=False)
-            review=analyze_page(list_pages(source)[1],review_other_barcodes=True)
-            skipped=analyze_page(list_pages(source)[1],review_other_barcodes=False)
+            first=analyze_page(list_pages(source)[0])
+            later=analyze_page(list_pages(source)[1])
             self.assertTrue(first.first_page_error)
-            self.assertEqual(review.other_barcodes,['AB'])
-            self.assertEqual(review.state,'review')
-            self.assertEqual(skipped.state,'attachment')
-            self.assertEqual(skipped.other_barcodes,['AB'])
-
+            self.assertEqual(later.other_barcodes,['AB'])
+            self.assertEqual(later.state,'attachment')
     def test_accuracy_settings_set_stamp_sensitivity_by_page_kind(self):
         with tempfile.TemporaryDirectory() as folder:
             scan=Path(folder)/'scan.pdf'

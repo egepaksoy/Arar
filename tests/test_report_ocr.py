@@ -99,7 +99,7 @@ class ReportFlowTests(unittest.TestCase):
 
     def test_unreadable_report_requires_review_even_with_blue_stamp(self):
         image,_=report_image(checksum_error=1)
-        result=self.analyze(image,BLUE,review_other_barcodes=False,review_missing_stamp=False)
+        result=self.analyze(image,BLUE,review_missing_stamp=False)
         self.assertTrue(result.target_found)
         self.assertFalse(result.barcode)
         self.assertFalse(result.first_page_error)
@@ -107,7 +107,7 @@ class ReportFlowTests(unittest.TestCase):
         self.assertIn('yazısı bulundu',result.reason)
 
     def test_missing_report_barcode_does_not_adopt_adjacent_product(self):
-        result=self.analyze(report_image(with_barcode=False)[0],BLUE,review_other_barcodes=False)
+        result=self.analyze(report_image(with_barcode=False)[0],BLUE)
         self.assertFalse(result.target_found)
         self.assertFalse(result.barcode)
         self.assertEqual(result.other_barcodes,['PRODUCT123'])

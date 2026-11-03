@@ -179,7 +179,7 @@ def find_report_barcodes(gray,dpi,cancel=None):
 
 
 def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshold=.74,
-                 review_other_barcodes=True, review_missing_stamp=True, faint_blue_as_blue=False):
+                 review_missing_stamp=True, faint_blue_as_blue=False):
     source=local_path(result.source,must_exist=True)
     stat=source.stat()
     if result.source_signature and result.source_signature!=(stat.st_size,stat.st_mtime_ns):
@@ -236,8 +236,6 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
                  'faint':'Soluk/renksiz mühür bulundu. Otomatik kapak olamaz.',
                  'none':'Uygun mühür güvenle bulunamadı.'}
         result.state,result.reason='review',reasons[result.stamp]+' Kullanıcı kararı gerekli.'
-    elif result.other_barcodes and review_other_barcodes:
-        result.state,result.reason='review','Başka barkodlar bulundu; Receiving Report başlığı doğrulanamadı.'
     else:
         result.state,result.reason='attachment','Receiving Report barkodu bulunmadı; devam sayfası adayı.'
     return result

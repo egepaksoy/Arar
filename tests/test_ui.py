@@ -546,11 +546,9 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(list(archive.rglob('Arar_onay.json')),[])
 
     def test_defaults_restore_every_setting_only_after_save(self):
-        previous=Settings(grouping='sequential',pause_on_later_barcode=True,confirm_cover=False,
+        previous=Settings(confirm_cover=False,
             notify_analysis_done=False,stamp_threshold=95,scan_stamp_threshold=90,
-            review_other_barcodes=False,review_missing_stamp=False,examples_dir=self.temp.name,
-            output_dir=self.temp.name,review_initial_mixed=False,review_initial_plain=False,
-            review_later_mixed=True,review_later_plain=True)
+            review_missing_stamp=False,examples_dir=self.temp.name,output_dir=self.temp.name)
         previous.faint_blue_as_blue=True
         previous.auto_save_scans=True
         self.app.settings=previous
@@ -626,7 +624,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(tree.get_children(),('0','2','1'))
         self.assertEqual(tree.selection(),('1',))
         self.assertEqual([p.index for p in self.app.pages],[0,1,9])
-        groups,_=build_groups(self.app.pages,self.app.settings.grouping)
+        groups,_=build_groups(self.app.pages)
         self.assertEqual([p.index for p in groups[0].pages],[0,1])
         with patch('arar.app.messagebox.askyesno',return_value=True):
             self.app.barcode_var.set('MANUAL')
@@ -665,9 +663,9 @@ class DesktopTests(unittest.TestCase):
             self.app.show_settings()
             self.root.update()
             dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
-            checkbox=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
-                          and 'başka barkod bulunursa' in widget.cget('text'))
-            checkbox.invoke()
+            self.assertFalse([widget for widget in self.descendants(dialog) if widget.winfo_class() in
+                              ('TCheckbutton','TRadiobutton') and ('başka barkod' in widget.cget('text')
+                              or 'ortak devam' in widget.cget('text') or 'ayrı belge' in widget.cget('text'))])
             missing=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
                          and widget.cget('text')=='Mühür bulunamazsa kullanıcı incelemesine al')
             missing.invoke()
@@ -679,7 +677,6 @@ class DesktopTests(unittest.TestCase):
             save.invoke()
             self.root.update()
             loaded=Settings.load()
-            self.assertFalse(loaded.review_other_barcodes)
             self.assertFalse(loaded.review_missing_stamp)
             self.assertEqual(Path(loaded.examples_dir),Path(self.temp.name).resolve())
 
@@ -787,30 +784,28 @@ class DesktopTests(unittest.TestCase):
                 question.assert_not_called()
                 error.assert_not_called()
                 self.assertEqual(processed,[0,1])
-                self.assertEqual(self.app.pages[0].effective_state,'review')
+                # Black or faint stamps alone make a report page a following page.
+                plain=barcode and stamp in ('black','faint')
+                self.assertEqual(self.app.pages[0].effective_state,'attachment' if plain else 'review')
                 self.assertFalse(self.app.pages[0].first_page_error)
 
-    def test_nonblue_pages_follow_review_settings_without_prompting(self):
-        for stamp,field in (('mixed','review_later_mixed'),('black','review_later_plain'),('faint','review_later_plain')):
-            for ask in (False,True):
-                with self.subTest(stamp=stamp,ask=ask):
-                    self.app.pages=[PageResult(str(self.source),i) for i in range(3)]
-                    setattr(self.app.settings,field,ask)
-                    def analyze(result,cancel,**kwargs):
-                        result.barcode='FIRST' if result.index==0 else 'LATER' if result.index==2 else ''
-                        result.target_found=result.index in (0,2)
-                        result.stamp='blue' if result.index==0 else stamp if result.index==2 else 'none'
-                        result.state='cover' if result.index==0 else 'review' if result.index==2 else 'attachment'
-                        return result
-                    with patch('arar.app.analyze_page',side_effect=analyze), \
-                            patch('arar.app.messagebox.askyesno',return_value=True) as question:
-                        self.app.analyze()
-                        self.pump_until(lambda:not self.app.busy)
-                    question.assert_not_called()
-                    self.assertEqual(self.app.pages[2].effective_state,'review' if ask else 'attachment')
-
-    def test_old_later_barcode_pause_setting_does_not_prompt(self):
-        self.app.settings.pause_on_later_barcode=True
+    def test_nonblue_pages_follow_the_fixed_stamp_rule_without_prompting(self):
+        for stamp,expected in (('mixed','review'),('black','attachment'),('faint','attachment')):
+            with self.subTest(stamp=stamp):
+                self.app.pages=[PageResult(str(self.source),i) for i in range(3)]
+                def analyze(result,cancel,**kwargs):
+                    result.barcode='FIRST' if result.index==0 else 'LATER' if result.index==2 else ''
+                    result.target_found=result.index in (0,2)
+                    result.stamp='blue' if result.index==0 else stamp if result.index==2 else 'none'
+                    result.state='cover' if result.index==0 else 'review' if result.index==2 else 'attachment'
+                    return result
+                with patch('arar.app.analyze_page',side_effect=analyze), \
+                        patch('arar.app.messagebox.askyesno',return_value=True) as question:
+                    self.app.analyze()
+                    self.pump_until(lambda:not self.app.busy)
+                question.assert_not_called()
+                self.assertEqual(self.app.pages[2].effective_state,expected)
+    def test_consecutive_covers_do_not_prompt(self):
         def analyze(result,cancel,**kwargs):
             result.barcode='FIRST' if result.index==0 else 'SECOND'
             result.target_found=True
@@ -827,25 +822,14 @@ class DesktopTests(unittest.TestCase):
         continuation.assert_not_called()
         error.assert_not_called()
         self.assertEqual([page.effective_state for page in self.app.pages],['cover','cover'])
-
-    def test_stamp_question_settings_are_saved(self):
-        with patch('arar.models.ROOT',Path(self.temp.name)):
-            self.app.show_settings()
-            self.root.update()
-            dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
-            fields=[widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
-                    and widget.cget('text') in ('Mavi + renksiz mühür birlikteyse incelemeye al','Yalnızca renksiz mühür varsa incelemeye al')]
-            self.assertEqual([widget.instate(['selected']) for widget in fields],[True,True,False,False])
-            for widget in fields:
-                widget.invoke()
-            save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
-                      and widget.cget('text')=='Ayarları kaydet')
-            save.invoke()
-            self.root.update()
-            loaded=Settings.load()
-            self.assertEqual([loaded.review_initial_mixed,loaded.review_initial_plain,
-                              loaded.review_later_mixed,loaded.review_later_plain],[False,False,True,True])
-
+    def test_stamp_position_questions_are_gone(self):
+        self.app.show_settings()
+        self.root.update()
+        dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+        texts=[widget.cget('text') for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton']
+        self.assertNotIn('Mavi + renksiz mühür birlikteyse incelemeye al',texts)
+        self.assertNotIn('Yalnızca renksiz mühür varsa incelemeye al',texts)
+        self.assertIn('Soluk mavi mühürleri mavi olarak işle',texts)
     def test_faint_blue_setting_is_saved_and_restored_in_dialog(self):
         with patch('arar.models.ROOT',Path(self.temp.name)):
             for expected in (False,True):
@@ -882,7 +866,7 @@ class DesktopTests(unittest.TestCase):
             self.gate.set()
             self.pump_until(lambda:not self.app.busy)
         self.assertEqual(values,[{'stamp_threshold':.78,'scan_stamp_threshold':.68,
-                                 'review_other_barcodes':True,'review_missing_stamp':True,
+                                 'review_missing_stamp':True,
                                  'faint_blue_as_blue':True}]*2)
 
     def test_review_while_next_page_is_analyzing(self):
