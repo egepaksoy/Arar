@@ -1246,16 +1246,16 @@ class ArarApp:
             self.label(row,'/ 100').pack(side='right',padx=(6,0))
             ttk.Spinbox(row,from_=50,to=99,increment=1,width=5,textvariable=variable).pack(side='right')
         for explanation in (
-            'Bu değerler mühür görüntüsünün örnek mühürlere ne kadar benzemesi gerektiğini belirler. '
-            '85, en az 85/100 benzerlik puanı demektir; %85 doğru sonuç garantisi değildir.',
-            'PDF içindeki mühürler (varsayılan 85): Mühür PDF içinde ayrı bir görsel olarak bulunuyorsa '
-            'bu eşik kullanılır. Program bu görseli örnek mühürlerle karşılaştırır.',
-            'Taranmış sayfalardaki mühürler (varsayılan 74): Belge taranmış ve sayfanın tamamı tek bir '
-            'görüntü olmuşsa, mühür sayfanın içinde aranır. Bu aramadaki benzerlik eşiği kullanılır. '
-            'İkisi de PDF olabilir; program PDF’nin yapısına göre yöntemi seçer.',
-            'Düşük değer daha fazla adayı kabul eder; yanlış eşleşmeler artabilir. Yüksek değer daha '
-            'sıkı eşleşme arar; bazı gerçek mühürler kaçabilir. Eşik şekil benzerliğini etkiler; '
-            'mavi, siyah ve soluk renk kontrolleri ayrıca uygulanır.',
+            'Mühürler yuvarlak halka şekliyle bulunur; bu değerler halkanın ne kadar belirgin ve '
+            'tamamlanmış olması gerektiğini belirler. Varsayılanlar ayarlı değerlerdir; %85 doğru '
+            'sonuç garantisi anlamına gelmez.',
+            'Taranmış sayfalardaki mühürler (varsayılan 74): Sayfanın tamamı tek bir görüntü olan '
+            'PDF’lerde (tarayıcı çıktısı) kullanılır.',
+            'PDF içindeki mühürler (varsayılan 85): Metin ve ayrı görsellerden oluşan PDF’lerde '
+            'kullanılır. Program PDF’nin yapısına göre hangisinin geçerli olduğunu seçer.',
+            'Düşük değer silik veya eksik basılmış halkaları da kabul eder; yanlış eşleşmeler artabilir. '
+            'Yüksek değer daha belirgin halka ister; soluk mühürler kaçabilir. Mavi, siyah ve soluk '
+            'renk ayrımı ayrıca yapılır.',
             'Değişiklikleri kaydettikten sonra analizi yeniden başlatın.',
         ):
             self.label(accuracy,explanation,size=9,color=MUTED,justify='left',wraplength=555,

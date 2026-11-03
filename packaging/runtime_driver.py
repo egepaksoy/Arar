@@ -34,9 +34,10 @@ def verify(prefix):
     from pypdf import PdfWriter
     from arar.detection import list_pages,render_page,analyze_page
     from arar.app import ArarApp
-    from arar.report_ocr import find_report_headings
+    from arar.report_ocr import strip_heading
     from PIL import Image
-    assert find_report_headings(Image.open(prefix/'app/assets/receiving_report.png'))[1]
+    import numpy as np
+    assert strip_heading(np.asarray(Image.open(prefix/'app/assets/receiving_report.png').convert('L'))[:50])
     assert Path(sys.prefix).resolve()==(prefix/'runtime').resolve()
     assert Path(os.__file__).resolve().is_relative_to(prefix/'runtime')
     root=tk.Tk()

@@ -1,4 +1,4 @@
-"""A slow OCR/stamp stage must not block another PDF preview."""
+"""A slow barcode/stamp stage must not block another PDF preview."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
@@ -27,14 +27,14 @@ class PreviewConcurrencyTests(unittest.TestCase):
                         entered.set()
                         if not release.wait(10):
                             raise TimeoutError('Analysis was not released')
-                    def ocr(*args):
+                    def ocr(*args,**kwargs):
                         if stage=='ocr': gate()
-                        return 0,[]
+                        return [],[],[],[]
                     def stamps(*args,**kwargs):
                         if stage=='stamps': gate()
                         return []
-                    with patch('arar.detection.find_report_headings',side_effect=ocr), \
-                            patch('arar.detection._scan_stamps',side_effect=stamps), \
+                    with patch('arar.detection.find_report_barcodes',side_effect=ocr), \
+                            patch('arar.detection.find_stamps',side_effect=stamps), \
                             ThreadPoolExecutor(max_workers=2) as pool:
                         analysis=pool.submit(analyze_page,list_pages(source)[0])
                         try:

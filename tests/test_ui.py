@@ -583,9 +583,10 @@ class DesktopTests(unittest.TestCase):
         self.root.update()
         accuracy=dialog.nametowidget(tabs.tabs()[1])
         text=' '.join(widget.cget('text') for widget in accuracy.winfo_children() if widget.winfo_class()=='Label')
-        self.assertIn('%85 doğru sonuç garantisi değildir',text)
-        self.assertIn('ayrı bir görsel',text)
-        self.assertIn('sayfanın tamamı tek bir',text)
+        self.assertIn('%85 doğru sonuç garantisi anlamına gelmez',text)
+        self.assertIn('yuvarlak halka',text)
+        self.assertIn('ayrı görsellerden',text)
+        self.assertIn('amamı tek bir',text)
         self.assertIn('yanlış eşleşmeler artabilir',text)
         for widget in accuracy.winfo_children():
             self.assertLessEqual(widget.winfo_y()+widget.winfo_height(),accuracy.winfo_height())

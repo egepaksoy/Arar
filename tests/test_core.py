@@ -10,7 +10,8 @@ from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject,NameObject,DecodedStreamObject
 from arar.barcodes import CODE39_RAW, WIDTHS, read_barcodes, read_code39_line
-from arar.detection import analyze_page, list_pages, render_page, _scan_stamps, _stamp_match, _classify_color, _color_stamps
+from arar.detection import analyze_page, list_pages, render_page
+from arar.stamps import Stamp
 from arar.exporter import export_groups, safe_filename
 from arar.models import PageResult, DocumentGroup, DocumentContext, Settings, Evidence, build_groups, ROOT
 from arar.offline import local_path
@@ -173,68 +174,27 @@ class ContextRuleTests(unittest.TestCase):
 
 
 class DetectionTests(unittest.TestCase):
-    def test_scanned_heading_ignores_paper_tint_and_speckles(self):
-        from arar.detection import HEADER, heading_score
-        from arar.barcodes import Barcode
-        # Tinted pixels outside the printed title used to widen its ink bounds.
-        image=Image.new('RGB',(760,140),(228,230,233))
-        image.paste(HEADER,(0,0))
-        image.putpixel((624,2),(190,190,190))
-        barcode=Barcode('TEST',(0,56,625,110),1.)
-        self.assertGreaterEqual(heading_score(image,barcode),.8)
-
-    def test_scan_matches_stamp_between_original_search_sizes(self):
-        from arar.detection import STAMP_TEMPLATES, _tight
-        template=_tight(STAMP_TEMPLATES[2][1])
-        width=50
-        stamp=template.resize((width,round(width*template.height/template.width)),Image.Resampling.BILINEAR)
-        image=Image.new('RGB',(180,180),'white')
-        image.paste(stamp,(64,52))
-        findings=_scan_stamps(image,1.25)
-        self.assertTrue(any(f.confidence>.9 and abs(f.box[0]-64/1.25)<2
-                            and abs(f.box[1]-52/1.25)<2 for f in findings))
-
     def test_later_raster_page_without_report_still_checks_stamps(self):
         with tempfile.TemporaryDirectory() as folder:
             source=Path(folder)/'scan.pdf'
             image=Image.new('RGB',(240,320),'white')
             image.save(source,'PDF',save_all=True,append_images=[image])
-            with patch('arar.detection._scan_stamps',return_value=[Evidence('black',(10,10,30,30),.9)]) as scan:
+            with patch('arar.detection.find_stamps',return_value=[Stamp('black',(10,10,30,30),.9)]) as scan:
                 result=analyze_page(list_pages(source)[1])
             scan.assert_called_once()
             self.assertEqual(result.stamp,'black')
             self.assertFalse(result.target_found)
             self.assertEqual(result.state,'attachment')
 
-    def test_faint_blue_option_requires_blue_ink_and_preserves_neutral_colors(self):
-        for color,normal,enabled in (
-            ((30,60,180),'blue','blue'),
-            ((180,180,220),'faint','blue'),
-            ((228,232,240),'black','blue'),
-            ((241,244,254),'none','blue'),
-            ((30,30,30),'black','black'),
-            ((190,190,190),'black','black'),
-            ((180,181,184),'black','black'),
-            ((240,240,240),'none','none'),
-            ((180,30,30),'black','black'),
-            ((30,180,30),'black','black'),
-            ((255,255,255),'none','none'),
-        ):
-            with self.subTest(color=color):
-                image=Image.new('RGB',(24,24),color)
-                self.assertEqual(_classify_color(image),normal)
-                self.assertEqual(_classify_color(image,faint_blue_as_blue=True),enabled)
-        image=Image.new('RGB',(48,48),(190,190,190))
-        image.paste((180,180,220),(0,0,5,5))
-        self.assertEqual(_classify_color(image,faint_blue_as_blue=True),'black')
-
-    def test_scan_matching_applies_faint_blue_option_without_accepting_black(self):
-        with patch('arar.detection._template_peak',return_value=(.90,(10,10))):
-            for color,normal,enabled in (((180,180,220),'faint','blue'),((80,80,80),'black','black')):
-                with self.subTest(color=color):
-                    image=Image.new('RGB',(120,120),color)
-                    self.assertEqual({item.kind for item in _scan_stamps(image,1.25)},{normal})
-                    self.assertEqual({item.kind for item in _scan_stamps(image,1.25,faint_blue_as_blue=True)},{enabled})
+    def test_stamp_boxes_are_reported_in_page_points(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'scan.pdf'
+            Image.new('RGB',(1240,1754),'white').save(source,'PDF',resolution=150)
+            with patch('arar.detection.find_stamps',return_value=[Stamp('blue',(150,300,300,450),.9)]):
+                result=analyze_page(list_pages(source)[0])
+        box=next(e.box for e in result.evidence if e.kind=='blue')
+        for value,expected in zip(box,(72,144,144,216)):
+            self.assertAlmostEqual(value,expected,delta=1)
 
     @requires_examples
     def test_faint_blue_option_changes_cover_eligibility_and_preserves_black_stamps(self):
@@ -259,7 +219,7 @@ class DetectionTests(unittest.TestCase):
             self.assertEqual(first.state,'review')
             self.assertFalse(second.first_page_error)
             self.assertEqual(second.state,'attachment')
-            with patch('arar.detection._scan_stamps',return_value=[Evidence('blue',(0,0,20,20),.9)]):
+            with patch('arar.detection.find_stamps',return_value=[Stamp('blue',(0,0,20,20),.9)]):
                 stamp_only=analyze_page(list_pages(source)[0])
             self.assertFalse(stamp_only.first_page_error)
             self.assertEqual(stamp_only.stamp,'blue')
@@ -285,29 +245,27 @@ class DetectionTests(unittest.TestCase):
             self.assertEqual(skipped.state,'attachment')
             self.assertEqual(skipped.other_barcodes,['AB'])
 
-    def test_scan_threshold_controls_which_candidates_are_retained(self):
-        image=Image.new('RGB',(120,120),'white')
-        with patch('arar.detection._template_peak',return_value=(.80,(10,10))), \
-                patch('arar.detection._classify_color',return_value='blue'):
-            self.assertTrue(_scan_stamps(image,1.25,min_score=.74))
-            self.assertFalse(_scan_stamps(image,1.25,min_score=.90))
-
-    @requires_examples
-    def test_embedded_stamp_threshold_controls_acceptance(self):
-        def fixed_score(image):
-            match=_stamp_match(image)
-            return (match[0],.80) if match and match[0]=='blue' and match[1]>=.85 else None
-        with patch('arar.detection._stamp_match',side_effect=fixed_score):
-            source=ROOT/'Örnek/Kolay/Örnek-3.pdf'
-            accepted=analyze_page(list_pages(source)[0],stamp_threshold=.75)
-            rejected=analyze_page(list_pages(source)[0],stamp_threshold=.85)
-        self.assertEqual((accepted.stamp,accepted.state),('blue','cover'))
-        self.assertEqual((rejected.stamp,rejected.state),('none','review'))
+    def test_accuracy_settings_set_stamp_sensitivity_by_page_kind(self):
+        with tempfile.TemporaryDirectory() as folder:
+            scan=Path(folder)/'scan.pdf'
+            Image.new('RGB',(240,320),'white').save(scan,'PDF',resolution=150)
+            composed=Path(folder)/'composed.pdf'
+            writer=PdfWriter()
+            writer.add_blank_page(width=200,height=200)
+            with composed.open('wb') as handle:
+                writer.write(handle)
+            with patch('arar.detection.find_stamps',return_value=[]) as finder:
+                analyze_page(list_pages(scan)[0],scan_stamp_threshold=.74*.8,stamp_threshold=.85)
+                self.assertAlmostEqual(finder.call_args.kwargs['sensitivity'],.8)
+                analyze_page(list_pages(composed)[0],scan_stamp_threshold=.74,stamp_threshold=.85*1.1)
+                self.assertAlmostEqual(finder.call_args.kwargs['sensitivity'],1.1)
+                analyze_page(list_pages(scan)[0],faint_blue_as_blue=True)
+                self.assertTrue(finder.call_args.kwargs['faint_blue_as_blue'])
 
     @requires_examples
     def test_missing_stamp_review_can_be_disabled_without_disabling_other_stamp_rules(self):
         source=ROOT/'Örnek/Kolay/Örnek-3.pdf'
-        with patch('arar.detection._stamp_match',return_value=None),patch('arar.detection._scan_stamps',return_value=[]):
+        with patch('arar.detection.find_stamps',return_value=[]):
             enabled=analyze_page(list_pages(source)[0],review_missing_stamp=True)
             disabled=analyze_page(list_pages(source)[0],review_missing_stamp=False)
         self.assertTrue(disabled.target_found)
@@ -376,21 +334,6 @@ class DetectionTests(unittest.TestCase):
         # The fixed-threshold line reader alone cannot decode this blur level.
         line=np.asarray(soft_image('THAEK12026196').convert('L'))[40]<140
         self.assertEqual(read_code39_line(line,40),[])
-
-    def test_scanned_blue_stamp_is_found_without_template_match(self):
-        page=np.full((1100,840,3),(240,238,250),np.uint8)  # Bluish scanner paper.
-        ink=(160,185,225)
-        cv2.circle(page,(500,700),22,ink,3)
-        cv2.putText(page,'QA-2',(485,695),cv2.FONT_HERSHEY_SIMPLEX,.4,ink,2)
-        cv2.putText(page,'025',(490,712),cv2.FONT_HERSHEY_SIMPLEX,.4,ink,2)
-        cv2.line(page,(100,200),(260,215),ink,3)  # Handwriting is long and sparse.
-        cv2.putText(page,'ABCDEFG',(100,400),cv2.FONT_HERSHEY_SIMPLEX,1,(40,40,45),2)
-        found=_color_stamps(Image.fromarray(page))
-        self.assertEqual([f.kind for f in found],['blue'])
-        left,top,right,bottom=[v*4 for v in found[0].box]
-        self.assertTrue(left<500<right and top<700<bottom)
-        page[:]=(240,238,250)
-        self.assertEqual(_color_stamps(Image.fromarray(page)),[])
 
     def test_code128_checksum_accepts_valid_and_rejects_corrupt(self):
         def image(symbols):

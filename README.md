@@ -9,7 +9,8 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - Yerel PDF’leri içe aktarma, seçili dosyayı kaldırma ve çalışma alanındaki dosyaları temizleme.
 - Ayarlardan seçilen klasör ve alt klasörlerindeki örnek PDF’leri açma.
 - Sayfa önizlemesi, %25–%400 yakınlaştırma, Ctrl + fare tekerleği ve sürükleyerek gezinme.
-- Önce OCR ile Receiving Report No yazısını bulma, altında dar ve gerekirse geniş alanda Code 39 / Code 128 barkodunu okuma. Yazı bulunamazsa yerel görsel şablonla arama.
+- Sayfadaki barkodları bulup Code 39 / Code 128 olarak okuma; Receiving Report No barkodunu, hemen üstündeki başlık yazısını yerel OCR ile okuyarak ayırt etme. Barkod numarası ve tasarımı serbesttir, şablon gerekmez.
+- Mühürleri yuvarlak halka şekliyle bulup rengini (mavi, siyah, soluk/renksiz) ayrıca belirleme; mavi el yazısı, tarih damgası ve tablolar mühür sayılmaz.
 - Mavi, siyah, soluk/renksiz ve birden fazla mühür türü için kapak değerlendirmesi.
 - **Analiz sürerken tamamlanan sayfaları inceleme ve kullanıcı kararı verme.** Arka plandaki sonuçlar manuel kararları değiştirmez.
 - İşlenen sayfalarda yeşil tik, kullanıcı incelemesi gerekenlerde kırmızı işaret.
@@ -35,7 +36,7 @@ EXE veya Python çalışma ortamı depoya dahil değildir.
 
 Windows 10/11 x64 için Python dahil tek dosyalı kurulum paketi hazırlanabilir.
 `dist/Arar-Setup-2026.10.30.5-win-x64.exe` dosyasını hedef bilgisayara taşıyıp **Kur**
-düğmesine basın. Python, Tkinter, yerel kütüphaneler ve mühür şablonları pakettedir;
+düğmesine basın. Python, Tkinter, yerel kütüphaneler ve OCR dil modeli pakettedir;
 pip veya internet gerekmez. Yönetici yetkisi istemeden kullanıcı hesabına kurulur,
 Başlat menüsü ve isteğe bağlı masaüstü kısayolu oluşturur. Tarayıcı sürücüleri ayrıca kurulur.
 
@@ -297,15 +298,16 @@ gösterilmez. Otomatik kayıt sonunda da popup açılmaz. Seçiminiz kaydedilir.
 
 **Ayarlar → Mühür doğruluğu → Mühür eşleşme eşiği** bölümünde PDF içindeki mühürler
 ve taranmış sayfalardaki mühürler için 50–99 arasında değer seçebilirsiniz.
-Varsayılanlar sırasıyla **85 ve 74**’tür. Düşük değer daha fazla adayı kabul eder;
-yüksek değer daha güçlü benzerlik arar. Bunlar doğruluk yüzdesi değildir.
-Ayarları kaydedip analizi yeniden başlatın. Mühür renginin ve sayfanın dosya içindeki
-konumunun değerlendirilmesi ayrıca devam eder.
+Varsayılanlar sırasıyla **85 ve 74**’tür ve mühür bulucunun ayarlı eşikleridir.
+Düşük değer daha zayıf (silik, eksik) halkaları da kabul eder; yüksek değer daha
+belirgin bir halka ister. Bunlar doğruluk yüzdesi değildir. Ayarları kaydedip analizi
+yeniden başlatın. Mühür renginin ve sayfanın dosya içindeki konumunun değerlendirilmesi
+ayrıca devam eder.
 
-**PDF içindeki mühürler**, PDF’de ayrı bir görsel olarak bulunan mühürlerdir.
-**Taranmış sayfalardaki mühürler**, sayfanın tamamı tek görüntü olduğunda sayfa içinde
-aranan mühürlerdir. İkisi de PDF olabilir; yöntem PDF’nin yapısına göre otomatik seçilir.
-Bu fark ve eşiklerin etkisi ayarlar ekranında açıklanır.
+**Taranmış sayfalardaki mühürler** eşiği sayfanın tamamı tek görüntü olan PDF’lerde
+(tarayıcı çıktısı), **PDF içindeki mühürler** eşiği metin ve ayrı görsellerden oluşan
+PDF’lerde kullanılır. Sayfa her iki durumda da tek görüntü olarak incelenir; yöntem
+PDF’nin yapısına göre otomatik seçilir.
 
 **Varsayılana dön** tüm ayarları ekranda başlangıç değerlerine getirir; örnek klasörü
 seçimi temizlenir ve kayıt klasörü varsayılan `Çıktı` konumuna döner.
@@ -330,25 +332,41 @@ kayıt engellenir. Kayıt sırasında mevcut PDF’lerin üzerine yazılmaz.
 
 ## Tanımanın kapsamı
 
-Başlık önce yerel Tesseract OCR motoruyla yazı olarak aranır. Receiving Report No
-yazısı bulunduğunda altındaki dar alanda barkod okunur; sonuç alınamazsa alan
-genişletilir. Başlıkla yatay hizası uyuşmayan komşu ürün barkodları kabul edilmez.
-Başlık bulunduğu hâlde barkod okunamazsa sayfa incelemeye alınır; başka bir
-barkod veya örnekteki numara otomatik atanmaz. Birden fazla farklı numara da
-kullanıcı incelemesi gerektirir. Başlık hiçbir yönde bulunamazsa `assets` içindeki
-görsel başlık örneğiyle önceki doğrulama yöntemi kullanılır. Bu yedek yöntemde de
-numara örnekten kopyalanmaz, belgedeki barkoddan çözülür.
+Her sayfa tek görüntü olarak incelenir: taramalar kendi çözünürlüklerinde
+(100–300 dpi), metin ve görsellerden oluşan PDF’ler 200 dpi’de. Görüntü büyütülmez;
+bu, hem hızı hem sonucu belirler.
+
+**Barkod:** Sayfada uzun ve sık dikey çizgilerden oluşan bölgeler barkod adayıdır;
+metin satırları ve tablo çizgileri elenir. Her bölge kendi içinde büyütülerek
+Code 39 / Code 128 olarak okunur ve değer en az iki satırda aynı okunmalıdır.
+Yalnızca barkodun hemen üstündeki dar şerit yerel Tesseract OCR ile okunur;
+RECEIVING REPORT NO yazısı (birkaç OCR hatasına izin verilerek) varsa barkod Receiving
+Report numarasıdır. Sayfanın başlığı olan "RECEIVING REPORT" veya PART NO gibi diğer
+etiketler kabul edilmez. 90, 180 ve 270 derece döndürülmüş sayfalar da okunur.
+Başlık bulunduğu hâlde barkod okunamazsa sayfa incelemeye alınır; başka bir barkod
+otomatik atanmaz. Aynı etikette üst üste iki farklı numara da kullanıcı incelemesi
+gerektirir. Diğer barkodlar "diğer barkodlar" olarak raporlanır.
+
+**Mühür:** Mühürler önce şekilden bulunur: içinde yazı olan, sayfanın geri kalanından
+belirgin şekilde ayrılan ve çevresi büyük ölçüde tamamlanan ince bir halka
+(yaklaşık 8–30 mm çap). Silik, kısmen basılmış veya yazı/çizgi üzerine basılmış mühürler de
+bulunur. Ardından halkanın mürekkep rengi ölçülür: belirgin mavi, açık (soluk) mavi,
+koyu nötr (siyah) veya açık nötr (soluk/renksiz). Siyah mürekkep baskıda her yerde
+olduğundan siyah mühür için halkanın neredeyse tam ve ince olması istenir; bu sayede
+kalın logo harfleri, tablolar ve grafik ızgaraları mühür sayılmaz. Mavi el yazısı,
+imzalar ve tarih damgaları yuvarlak halka oluşturmadığı için mühür değildir.
+Halka içinde tek rakam veya tek şekil olan basılı daireler (numaralı çizim işaretleri,
+RoHS/Pb rozetleri, teknik çizim daireleri) ve 8 mm’den küçük halkalar mühür sayılmaz;
+barkod bölgeleri de mühür aramasından çıkarılır. Yine de bazı basılı yuvarlak logolar
+veya çizim şekilleri mühür gibi görünebilir; Receiving Report barkodu olmayan
+sayfalarda bunlar kapak kararını değiştirmez.
+
 OCR motoru ve İngilizce dil modeli kurulumla taşınır; çalışma sırasında indirme
-veya bulut servisi kullanılmaz. Mühür şablonları bir kez hazırlanır; bütün sayfa
-OpenCV `matchTemplate` ile aynı 77 şablon/boyut kombinasyonunda aranır. Aday bölge
-elemesi yapılmaz. Tepe eşleşmenin puanı eşik karşılaştırmasından önce çift
-hassasiyetle tekrar hesaplanır. Renk sınıflandırması ve mühür karar kuralları korunur.
-PDFium erişimi kilit altında kalır; OCR, barkod ve mühür hesaplamaları bağımsız
-görüntü kopyalarında kilit dışında çalışır. Önizleme bu hesaplamaları beklemez.
-Tam sayfa taramalarda barkod okuma ve 90 derece yön düzeltme desteklenir.
-Yalnızca mavi mühür bulunursa kapak, diğer mühürlerde konuma ve ayarlara göre karar
-verilir. Farklı mühür tasarımları, yazı tipleri,
-eğik veya düşük kaliteli taramalar manuel inceleme gerektirebilir.
+veya bulut servisi kullanılmaz. PDFium erişimi kilit altında kalır; OCR, barkod ve
+mühür hesaplamaları bağımsız görüntü kopyalarında kilit dışında çalışır. Önizleme bu
+hesaplamaları beklemez. Yalnızca mavi mühür bulunursa kapak, diğer mühürlerde konuma
+ve ayarlara göre karar verilir. Çok bozuk veya çok düşük çözünürlüklü taramalar manuel
+inceleme gerektirebilir.
 
 Doğrudan tarayıcı cihazı bağlantısı ve parola korumalı PDF açma bu sürümün
 kapsamında değildir. OCR yalnızca Receiving Report No başlığını bulmak için
@@ -393,11 +411,13 @@ baslat.bat           Windows başlatma betiği
 baslat.sh            Unix / Linux / macOS başlatma betiği
 arar/app.py          Masaüstü arayüzü ve arka plan işlem kuyruğu
 arar/models.py       Sayfa kararları, ayarlar ve belge grupları
-arar/detection.py    Yerel barkod/başlık/mühür incelemesi
-arar/barcodes.py     Code 39 ve Code 128 okuyucusu
+arar/detection.py    Sayfa incelemesi: Receiving Report barkodu, başlık ve mühür kararları
+arar/barcodes.py     Barkod bölgesi bulma, Code 39 ve Code 128 okuyucusu
+arar/stamps.py       Yuvarlak mühür bulma ve renk sınıflandırması
+arar/report_ocr.py   Barkod yanındaki başlık yazısının yerel OCR ile okunması
 arar/exporter.py     PDF kaydı ve işlem raporu
 arar/offline.py      Ağ engeli ve yerel dosya yolu doğrulaması
-assets/              Gerekli görsel şablonlar
+assets/              OCR dil modeli, test ve kurulum denetimi için örnek görseller
 tests/               Temel ve isteğe bağlı arayüz testleri
 ```
 
@@ -405,7 +425,7 @@ tests/               Temel ve isteğe bağlı arayüz testleri
 
 `.gitignore`; yerel ayarları, PDF’leri, örnek belgeleri, çıktı raporlarını,
 geçici dosyaları, Python ortamlarını ve yerel wheel dosyalarını dışarıda tutar.
-Gerekli görsel şablonlar ve `libs/` paketleri depoya dahildir. `.gitattributes` metin
+OCR dil modeli, örnek görseller ve `libs/` paketleri depoya dahildir. `.gitattributes` metin
 dosyalarının satır sonlarını düzenler; libs içindeki üçüncü taraf dosyaların içeriğini korur.
 
 GitHub’da boş bir depo oluşturduktan sonra aşağıdaki `DEPO_ADRESI` yerine

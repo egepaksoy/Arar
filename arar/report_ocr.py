@@ -1,27 +1,15 @@
-"""Offline text location for Receiving Report headings (no barcode OCR)."""
-from dataclasses import dataclass
+"""Offline reading of the RECEIVING REPORT NO heading next to a barcode (no barcode OCR)."""
 import os
 import re
+import threading
 
-from PIL import Image, ImageOps
-from tesserocr import OEM, PSM, RIL, PyTessBaseAPI, iterate_level
+import numpy as np
+from PIL import Image
+from tesserocr import OEM, PSM, PyTessBaseAPI
 
 from .models import ROOT
 
 TESSDATA = ROOT / 'assets' / 'tessdata'
-
-
-@dataclass(frozen=True)
-class Word:
-    text: str
-    box: tuple[float, float, float, float]
-    confidence: float
-
-
-@dataclass(frozen=True)
-class ReportHeading:
-    box: tuple[float, float, float, float]
-    confidence: float
 
 
 def tessdata_path():
@@ -43,84 +31,62 @@ def tessdata_path():
     return str(path)
 
 
-def _normalized(text):
-    return re.sub('[^A-Z0-9]', '', text.upper())
+HEADING = 'RECEIVINGREPORTNO'
+_LOOKALIKE = str.maketrans({'0': 'O', '1': 'I', 'L': 'I', '|': 'I', '!': 'I', '5': 'S', '8': 'B'})
+_local = threading.local()
 
 
-def _one_typo(text, expected):
-    """Allow at most one substitution/insertion/deletion in a long word."""
-    if text == expected:
-        return True
-    if abs(len(text)-len(expected)) > 1:
-        return False
-    if len(text) == len(expected):
-        return sum(a != b for a, b in zip(text, expected)) <= 1
-    short, long = sorted((text, expected), key=len)
-    return any(long[:i]+long[i+1:] == short for i in range(len(long)))
-
-
-def headings_from_words(words):
-    """Match words and spatial adjacency, independently of font and ink color."""
-    headings = []
-    for first in words:
-        if first.confidence < 40 or not _one_typo(_normalized(first.text), 'RECEIVING'):
-            continue
-        height = first.box[3]-first.box[1]
-        if height <= 0:
-            continue
-        following = sorted((w for w in words if w.box[0] >= first.box[2]-height*.2
-                            and abs((w.box[1]+w.box[3]-first.box[1]-first.box[3])/2) < height*.65),
-                           key=lambda w: w.box[0])
-        if len(following) < 2:
-            continue
-        report, number = following[:2]
-        if (report.confidence < 40 or number.confidence < 30
-                or not _one_typo(_normalized(report.text), 'REPORT')
-                or _normalized(number.text).replace('0', 'O') != 'NO'
-                or report.box[0]-first.box[2] > height*2.5
-                or number.box[0]-report.box[2] > height*2.5):
-            continue
-        box = (first.box[0], min(first.box[1], report.box[1], number.box[1]),
-               number.box[2], max(first.box[3], report.box[3], number.box[3]))
-        headings.append(ReportHeading(box, min(first.confidence, report.confidence, number.confidence)/100))
-    return headings
-
-
-def find_report_headings(image, cancel=None):
-    """Return rotation and heading boxes in the oriented ORIGINAL image's pixels."""
-    if cancel is not None and cancel.is_set():
-        return 0, []
-    gray = image.convert('L')
-    if gray.getextrema()[0] >= 245:  # Blank pages need no OCR.
-        return 0, []
-    factor = min(1., 2400/max(image.size))
-    size = (max(1, round(image.width*factor)), max(1, round(image.height*factor)))
-    small = ImageOps.autocontrast(gray.resize(size, Image.Resampling.LANCZOS))
-    with PyTessBaseAPI(path=tessdata_path(), lang='eng', oem=OEM.LSTM_ONLY,
-                       psm=PSM.SPARSE_TEXT) as api:
+def _strip_api():
+    """One Tesseract engine per thread; loading the model costs more than a strip."""
+    api = getattr(_local, 'api', None)
+    if api is None:
+        api = PyTessBaseAPI(path=tessdata_path(), lang='eng', oem=OEM.LSTM_ONLY, psm=PSM.AUTO)
         api.SetVariable('debug_file', os.devnull)
-        for rotation in (0, 90, 180, 270):
-            if cancel is not None and cancel.is_set():
-                return 0, []
-            oriented = small.rotate(rotation, expand=True)
-            api.SetImage(oriented)
-            api.SetSourceResolution(200)
-            if not api.Recognize(timeout=5000):
-                raise RuntimeError('Yazı tanıma zamanında tamamlanamadı. Sayfa yeniden incelenmeli.')
-            iterator = api.GetIterator()
-            words = []
-            if iterator is not None:
-                for item in iterate_level(iterator, RIL.WORD):
-                    if item.Empty(RIL.WORD):
-                        continue
-                    text, box = item.GetUTF8Text(RIL.WORD), item.BoundingBox(RIL.WORD)
-                    if text and box:
-                        words.append(Word(text, box, item.Confidence(RIL.WORD)))
-            headings = headings_from_words(words)
-            if headings:
-                width, height = image.size if rotation in (0, 180) else image.size[::-1]
-                sx, sy = width/oriented.width, height/oriented.height
-                return rotation, [ReportHeading((h.box[0]*sx, h.box[1]*sy,
-                                                  h.box[2]*sx, h.box[3]*sy), h.confidence)
-                                  for h in headings]
-    return 0, []
+        _local.api = api
+    return api
+
+
+def _infix_distance(text, pattern):
+    """Fewest edits that turn some part of ``text`` into ``pattern``."""
+    previous = [0]*(len(text)+1)   # the pattern may start anywhere in the text
+    for i, letter in enumerate(pattern, 1):
+        current = [i]+[0]*len(text)
+        for j, char in enumerate(text, 1):
+            current[j] = min(previous[j]+1, current[j-1]+1, previous[j-1]+(letter != char))
+        previous = current
+    return min(previous)
+
+
+def heading_distance(text):
+    """OCR edits between ``text`` and RECEIVING REPORT NO.
+
+    The 'REPORT NO' part may differ by one edit at most, so a page title
+    reading RECEIVING REPORT alone is never taken for the barcode heading.
+    """
+    text = re.sub('[^A-Z0-9|!]', '', text.upper()).translate(_LOOKALIKE)
+    pattern = HEADING.translate(_LOOKALIKE)
+    if _infix_distance(text, pattern[-8:]) > 1:
+        return len(pattern)
+    return _infix_distance(text, pattern)
+
+
+def strip_heading(gray):
+    """Confidence (0-1) that an upright text strip reads RECEIVING REPORT NO.
+
+    The strip is the narrow band next to a barcode, so a few OCR errors are
+    tolerated: unrelated headings such as PART NO are far more than three
+    edits away.
+    """
+    if gray.size == 0 or int(gray.max())-int(gray.min()) < 40:
+        return 0.
+    # Tesseract needs a margin; strips are cut right at the text.
+    margin = max(8, gray.shape[0]//4)
+    paper = int(np.percentile(gray, 90))
+    gray = np.pad(gray, margin, constant_values=paper)
+    api = _strip_api()
+    api.SetImage(Image.fromarray(gray))
+    api.SetSourceResolution(300)
+    if not api.Recognize(timeout=3000):
+        return 0.
+    distance = heading_distance(api.GetUTF8Text() or '')
+    return max(0., 1-distance/len(HEADING)) if distance <= 3 else 0.

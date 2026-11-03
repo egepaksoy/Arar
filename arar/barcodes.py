@@ -34,6 +34,12 @@ CODE39_RAW = {
 CODE39 = {tuple(c.isupper() for c in p): ch for ch,p in CODE39_RAW.items()}
 
 
+@dataclass(frozen=True)
+class BarRegion:
+    box: tuple[int, int, int, int]
+    regularity: float   # 0-1: how consistently each column is all bar or all space
+
+
 @dataclass
 class Barcode:
     value: str
@@ -270,3 +276,137 @@ def read_barcodes(image, stride=6):
             else:
                 found.append(candidate)
     return [b for b in found if b.box[3]-b.box[1] >= max(2,stride)]
+
+
+def barcode_regions(gray, dpi):
+    """Boxes of 1D barcodes with vertical bars in a grayscale page (numpy array).
+
+    Only tall vertical strokes are kept, then strokes a few pixels apart are
+    joined. Bars are tall and close together, so they form a block; letters
+    are too short to survive, and table rules are too far apart to join.
+    Every column of a real symbol is then mostly bar or mostly space.
+    """
+    block = max(15, int(dpi/4)) | 1
+    dark = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, block, 12)
+    tall = max(8, int(dpi*.12))
+    strokes = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((tall, 1), np.uint8))
+    gap = max(3, int(dpi/20))
+    joined = cv2.morphologyEx(strokes, cv2.MORPH_CLOSE, np.ones((1, gap*2+1), np.uint8))
+    joined = cv2.morphologyEx(joined, cv2.MORPH_CLOSE, np.ones((max(3, int(dpi/50)), 1), np.uint8))
+    count, _, stats, _ = cv2.connectedComponentsWithStats(joined)
+    regions = []
+    for x, y, w, h, _ in stats[1:count]:
+        if w < dpi*.5 or h < tall:
+            continue
+        boxes = [(x, y, w, h)]
+        if w/h < 1.5 or h > dpi*1.5:
+            # A table rule next to a symbol joins both into one component.
+            boxes = [(x+a, y+b, c, d) for a, b, c, d in _blocks(joined[y:y+h, x:x+w] > 0, dpi*.5, tall)]
+        for bx, by, bw, bh in boxes:
+            if bw < dpi*.5 or bh < tall or bw/bh < 1.5 or bh > dpi*1.5:
+                continue
+            bars = _bar_rows(gray[by:by+bh, bx:bx+bw])
+            if bars is None:
+                continue
+            start, end, regularity = bars
+            regions.append(BarRegion((int(bx), int(by+start), int(bx+bw), int(by+end)), regularity))
+    return regions
+
+
+def _blocks(area, min_width, min_height):
+    """Solid blocks (rows with a long continuous run) inside a joined component."""
+    padded = np.pad(area, ((0, 0), (1, 1))).astype(np.int8)
+    longest = np.zeros(area.shape[0], int)
+    for row, values in enumerate(padded):
+        edges = np.flatnonzero(np.diff(values))
+        if len(edges):
+            longest[row] = int((edges[1::2]-edges[::2]).max())
+    solid = longest >= min_width
+    edges = np.flatnonzero(np.diff(np.r_[0, solid.astype(int), 0]))
+    found = []
+    for top, bottom in zip(edges[::2], edges[1::2]):
+        if bottom-top < min_height:
+            continue
+        columns = area[top:bottom].mean(axis=0) >= .6
+        runs = np.flatnonzero(np.diff(np.r_[0, columns.astype(int), 0]))
+        if not len(runs):
+            continue
+        widths = runs[1::2]-runs[::2]
+        k = int(np.argmax(widths))
+        found.append((int(runs[2*k]), int(top), int(widths[k]), int(bottom-top)))
+    return found
+
+
+def _bar_rows(crop):
+    """Rows of a candidate region that belong to the bars, or None if it has no bars.
+
+    A heading or handwriting merged into the region would otherwise move the
+    text search away from the real top edge of the symbol.
+    """
+    h = crop.shape[0]
+    inner = crop[h//6:h-h//6]
+    dark = inner < (int(inner.min())+int(inner.max()))/2
+    fill = dark.mean(axis=0)
+    regularity = float(np.mean(np.abs(fill-.5)*2))
+    if regularity < .62 or not .2 < float(np.mean(fill > .5)) < .8:
+        return None
+    profile = fill > .5
+    rows = crop < (int(crop.min())+int(crop.max()))/2
+    agree = (rows == profile).mean(axis=1) >= .75
+    edges = np.flatnonzero(np.diff(np.r_[0, agree.astype(int), 0]))
+    if not len(edges):
+        return None
+    starts, ends = edges[::2], edges[1::2]
+    longest = int(np.argmax(ends-starts))
+    if ends[longest]-starts[longest] < max(4, h*.3):
+        return None
+    return int(starts[longest]), int(ends[longest]), regularity
+
+
+def _read_row(image, y):
+    line = image[y] < 140
+    found = []
+    if np.count_nonzero(line[1:] != line[:-1]) >= 24:
+        found = read_line(line, y)+read_code39_line(line, y)
+    if not found:
+        # Rows of vertical bars agree, so averaging them removes scan noise.
+        found = read_gray_line(image[max(0, y-3):y+4].mean(axis=0), y)
+    return found
+
+
+def decode_region(gray, box, dpi, rows=9):
+    """Decode the barcode in ``box`` of a grayscale page.
+
+    Only a few rows across the bars are read, and a value must be read on at
+    least two of them. Returns (barcodes, reversed): boxes are in page pixels,
+    and ``reversed`` tells that the symbol only reads right-to-left (an
+    upside-down page).
+    """
+    x0, y0, x1, y1 = box
+    pad_y, pad_x = max(2, (y1-y0)//5), max(6, int((y1-y0)*.4))
+    top, left = max(0, y0-pad_y), max(0, x0-pad_x)
+    crop = gray[top:y1+pad_y, left:x1+pad_x]
+    # Narrow bars are only about two pixels wide at 150 dpi; enlarge the crop
+    # (not the page) so the sub-pixel reader sees each bar edge.
+    for factor in (max(1., 375/dpi), max(1.4, 525/dpi)):
+        big = cv2.resize(crop, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC)
+        lines = np.linspace((y0-top+(y1-y0)*.15)*factor, (y0-top+(y1-y0)*.85)*factor, rows).astype(int)
+        for flipped in (False, True):
+            image = np.ascontiguousarray(big[:, ::-1] if flipped else big)
+            hits = {}
+            for y in lines:
+                for b in _read_row(image, int(y)):
+                    hits.setdefault(b.value, []).append(b)
+            found = [seen for seen in hits.values() if len(seen) >= 2]
+            if found:
+                width = big.shape[1]
+                result = []
+                for seen in found:
+                    a = min(b.box[0] for b in seen)
+                    c = max(b.box[2] for b in seen)
+                    if flipped:
+                        a, c = width-c, width-a
+                    result.append(Barcode(seen[0].value, (int(left+a/factor), int(y0), int(left+c/factor), int(y1)),
+                                          min(b.score for b in seen), seen[0].kind))
+                return result, flipped
+    return [], False

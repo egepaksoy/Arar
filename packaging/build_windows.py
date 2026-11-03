@@ -83,9 +83,10 @@ from pathlib import Path
 from pypdf import PdfWriter
 from arar.detection import list_pages, render_page, analyze_page
 from arar.app import ArarApp
-from arar.report_ocr import find_report_headings
+from arar.report_ocr import strip_heading
 from PIL import Image
-assert find_report_headings(Image.open('assets/receiving_report.png'))[1]
+import numpy as np
+assert strip_heading(np.asarray(Image.open('assets/receiving_report.png').convert('L'))[:50])
 root=tk.Tk(); root.withdraw(); root.update(); root.destroy()
 with tempfile.TemporaryDirectory() as folder:
     source=Path(folder)/'check.pdf'
