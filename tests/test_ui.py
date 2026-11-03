@@ -412,7 +412,7 @@ class DesktopTests(unittest.TestCase):
         app.pages[1].state='attachment'
         app._refresh_summary()
         self.assertIn('karar bekliyor',app.export_note.cget('text'))
-        self.assertIn('sayfa 1',app.export_note.cget('text'))
+        self.assertIn('ID 1',app.export_note.cget('text'))
         app.pages[0].decision='cover'
         app._refresh_summary()
         self.assertIn('numarası yok',app.export_note.cget('text'))
@@ -743,7 +743,8 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(self.app.page_tree.selection(),('0',))
             self.assertEqual(self.app.page_tree.yview()[0],0)
             self.assertEqual(self.app.pages[34].state,'pending')
-            self.assertEqual(self.app.page_tree.item('34','values')[1],'Bekliyor')
+            self.assertEqual(self.app.page_tree.item('34','values')[2],'Bekliyor')
+            self.assertEqual(self.app.page_tree.item('34','values')[0],'35')  # sequential ID
             self.assertEqual(float(self.app.progress.cget('value')),0)
             self.assertNotIn((str(self.source),1),self.app.preview_cache)
             self.app.events.put(('preview',old_generation,(str(self.source),1),('old',None)))
@@ -907,7 +908,7 @@ class DesktopTests(unittest.TestCase):
             self.app.barcode_var.set('MANUAL')
             self.app.cover_btn.invoke()
             self.assertEqual(self.app.pages[0].number,'MANUAL')
-            self.assertEqual(self.app.page_tree.item('0','values')[0],'✓ 1')
+            self.assertEqual(self.app.page_tree.item('0','values')[1],'✓ 1')
             self.assertEqual(str(self.app.export_btn.cget('state')),'disabled')
             self.gate.set()
             self.pump_until(lambda:not self.app.busy)
@@ -1056,5 +1057,5 @@ class DesktopTests(unittest.TestCase):
             self.app.barcode_var.set('MANUAL')
             self.app.cover_btn.invoke()
             self.assertEqual(self.app.pages[0].number,'MANUAL')
-            self.assertEqual(self.app.page_tree.item('0','values')[0],'✓ 1')
+            self.assertEqual(self.app.page_tree.item('0','values')[1],'✓ 1')
             self.assertFalse(self.app.pages[1].decision)

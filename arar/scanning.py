@@ -380,21 +380,24 @@ def approval_problem(status,pages,grouping,error='',*,reviewing=False):
         return ('İlk sayfada Receiving Report No ve mühür bulunamadı. '+
                 ('İlk sayfaya sağdaki panelden karar verin.' if reviewing else 'Taramayı inceleyin.'))
     groups,unassigned=build_groups(pages,grouping)
+    # Pages are named by their ID: the 1..n position shown in the page list,
+    # which stays unique when several PDFs are open together.
+    ids={id(page):number for number,page in enumerate(pages,1)}
     def listed(items):
-        return ', '.join(str(page.index+1) for page in items[:8])+(' …' if len(items)>8 else '')
+        return ', '.join(str(ids[id(page)]) for page in items[:8])+(' …' if len(items)>8 else '')
     unassigned_in=lambda *states:[page for page in unassigned if page.effective_state in states]
     if unassigned_in('pending'):
         items=unassigned_in('pending')
-        return f'{len(items)} sayfa henüz analiz edilmedi (sayfa {listed(items)}). Analizin bitmesini bekleyin.'
+        return f'{len(items)} sayfa henüz analiz edilmedi (ID {listed(items)}). Analizin bitmesini bekleyin.'
     if unassigned_in('review'):
         items=unassigned_in('review')
-        return f'{len(items)} sayfa karar bekliyor (sayfa {listed(items)}). {go} karar verin.'
+        return f'{len(items)} sayfa karar bekliyor (ID {listed(items)}). {go} karar verin.'
     if unassigned_in('cover'):
         items=unassigned_in('cover')
-        return (f'{len(items)} kapak sayfasında Receiving Report numarası yok (sayfa {listed(items)}). '
+        return (f'{len(items)} kapak sayfasında Receiving Report numarası yok (ID {listed(items)}). '
                 f'{go} numarayı girin.')
     if unassigned:
-        return (f'{len(unassigned)} devam sayfası bir kapağa bağlanamadı (sayfa {listed(unassigned)}). '
+        return (f'{len(unassigned)} devam sayfası bir kapağa bağlanamadı (ID {listed(unassigned)}). '
                 f'{go} kapak sayfasını belirleyin.')
     if not groups:
         return 'Kapak sayfası bulunamadı. '+('Bir sayfayı kapak olarak işaretleyin.' if reviewing else 'Taramayı inceleyin.')

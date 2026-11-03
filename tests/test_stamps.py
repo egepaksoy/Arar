@@ -71,6 +71,13 @@ class StampTests(unittest.TestCase):
         self.assertEqual(kinds(image), ['blue'])
         self.assertEqual(kinds(image, sensitivity=1.3), [])     # a stricter setting
 
+    def test_strength_tells_up_to_which_setting_a_stamp_is_kept(self):
+        image = draw_stamp(page(), (350, 450), (150, 175, 230), arc=200)
+        strength = find_stamps(image, DPI)[0].strength
+        self.assertTrue(1 <= strength < 1.3)
+        self.assertEqual(kinds(image, sensitivity=strength * .99), ['blue'])
+        self.assertEqual(kinds(image, sensitivity=strength * 1.01), [])
+
     def test_barcode_boxes_are_excluded(self):
         image = draw_stamp(page(), (350, 450), (40, 40, 40))
         self.assertEqual(kinds(image), ['black'])

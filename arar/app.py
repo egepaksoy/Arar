@@ -239,8 +239,8 @@ class ArarApp:
         table_frame.grid(row=4,column=0,sticky='nsew',padx=8,pady=(0,8))
         table_frame.grid_rowconfigure(0,weight=1)
         table_frame.grid_columnconfigure(0,weight=1)
-        self.page_tree=ttk.Treeview(table_frame,columns=('page','state','number'),show='headings',selectmode='browse')
-        for key,title,width in [('page','Sayfa',55),('state','Durum',68),('number','Barkod',103)]:
+        self.page_tree=ttk.Treeview(table_frame,columns=('id','page','state','number'),show='headings',selectmode='browse')
+        for key,title,width in [('id','ID',38),('page','Sayfa',50),('state','Durum',68),('number','Barkod',95)]:
             self.page_tree.heading(key,text=title,command=lambda column=key:self.sort_pages(column))
             self.page_tree.column(key,width=width,minwidth=40,stretch=key=='number',anchor='w')
         self.page_tree.grid(row=0,column=0,sticky='nsew')
@@ -786,7 +786,7 @@ class ArarApp:
         self.selected=index
         page=self.pages[index]
         self._inspector()
-        self.preview_title.configure(text=Path(page.source).name+'  •  Sayfa '+str(page.index+1))
+        self.preview_title.configure(text=Path(page.source).name+'  •  Sayfa '+str(page.index+1)+'  •  ID '+str(index+1))
         self.preview_generation+=1
         generation=self.preview_generation
         key=(page.source,page.index)
@@ -871,9 +871,17 @@ class ArarApp:
             colors={'barcode':TEAL,'blue':'#276ac4','black':AMBER,'faint':AMBER}
             for item in self.pages[self.selected].evidence:
                 a,b,c,d=item.box
-                self.canvas.create_rectangle(x+a*w/page_size[0],y+b*h/page_size[1],
-                                             x+c*w/page_size[0],y+d*h/page_size[1],
-                                             outline=colors.get(item.kind,AMBER),width=2)
+                left,top=x+a*w/page_size[0],y+b*h/page_size[1]
+                right,bottom=x+c*w/page_size[0],y+d*h/page_size[1]
+                color=colors.get(item.kind,AMBER)
+                self.canvas.create_rectangle(left,top,right,bottom,outline=color,width=2)
+                if item.kind in ('blue','black','faint'):
+                    # The highest accuracy setting that still keeps this stamp,
+                    # above the box, or below it at the top edge of the page.
+                    above=top-3>y+12
+                    self.canvas.create_text((left+right)/2,top-3 if above else bottom+3,
+                                            text=str(round(item.confidence*100)),fill=color,
+                                            anchor='s' if above else 'n',font=('Segoe UI',9,'bold'))
         self.canvas.xview_moveto(max(0,min((area_w-width)/area_w,(x+point[0]*w-anchor[0])/area_w)))
         self.canvas.yview_moveto(max(0,min((area_h-height)/area_h,(y+point[1]*h-anchor[1])/area_h)))
 
@@ -923,7 +931,7 @@ class ArarApp:
             self.page_tree.selection_set('0')
 
     def sort_pages(self,column):
-        if column not in ('page','state','number'):
+        if column not in ('id','page','state','number'):
             return
         self._review_interaction()
         self.page_sort_reverse=not self.page_sort_reverse if self.page_sort_column==column else False
@@ -933,15 +941,17 @@ class ArarApp:
 
     def _sort_page_rows(self):
         column=self.page_sort_column
-        for key,title in (('page','Sayfa'),('state','Durum'),('number','Barkod')):
+        for key,title in (('id','ID'),('page','Sayfa'),('state','Durum'),('number','Barkod')):
             arrow=(' ▼' if self.page_sort_reverse else ' ▲') if column==key else ''
             self.page_tree.heading(key,text=title+arrow)
         if column is None:
             return
         def key(index):
             page=self.pages[index]
+            if column=='id':
+                return index
             if column=='page':
-                return page.index
+                return (page.source,page.index)
             if column=='state':
                 return STATE_LABELS[page.effective_state].casefold()
             return tuple((1,int(part)) if part.isdigit() else (0,part.casefold())
@@ -953,7 +963,7 @@ class ArarApp:
     def _update_row(self,i,page,*,sort=True):
         state=page.effective_state
         mark='✓ ' if state in ('cover','attachment') else '! ' if state=='review' else ''
-        values=(mark+str(page.index+1),STATE_LABELS[state]+(' *' if page.decision else ''),page.number or '—')
+        values=(str(i+1),mark+str(page.index+1),STATE_LABELS[state]+(' *' if page.decision else ''),page.number or '—')
         old_values=self.page_tree.item(str(i),'values') if self.page_tree.exists(str(i)) else ()
         if self.page_tree.exists(str(i)):
             self.page_tree.item(str(i),values=values,tags=(page.effective_state,))

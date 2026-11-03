@@ -195,13 +195,16 @@ def analyze_page(result,cancel=None, *, stamp_threshold=.85, scan_stamp_threshol
         return result
     # The accuracy settings keep their meaning: a lower value accepts weaker rings.
     threshold,default=(scan_stamp_threshold,DEFAULT_THRESHOLDS[1]) if scanned else (stamp_threshold,DEFAULT_THRESHOLDS[0])
-    sensitivity=min(1.3,max(.6,threshold/default))
+    sensitivity=min(1.35,max(.55,threshold/default))
     stamps=find_stamps(rgb,dpi,exclude=boxes,faint_blue_as_blue=faint_blue_as_blue,
                        sensitivity=sensitivity,cancel=cancel)
     if cancel is not None and cancel.is_set():
         return result
     points=lambda box:tuple(float(v)/scale for v in box)
-    evidence=[Evidence(s.kind,points(s.box),s.confidence,
+    # A stamp's confidence is the highest accuracy setting (0-1) that still
+    # keeps it, so the value shown on the preview can be compared directly
+    # with the setting used for this kind of page.
+    evidence=[Evidence(s.kind,points(s.box),min(.99,s.strength*default),
                        'Yuvarlak mühür'+(' (soluk mavi)' if s.pale_blue else '')) for s in stamps]
     heading_evidence=[Evidence('heading',points(box),confidence,'OCR: RECEIVING REPORT NO')
                       for box,confidence in headings]

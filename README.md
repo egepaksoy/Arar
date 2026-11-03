@@ -278,7 +278,12 @@ Analizi durdurmak için **Durdur** düğmesini kullanabilirsiniz.
 **Kaynak dosyalar** listesinde Ctrl ile ayrı dosyaları, Shift ile bir aralığı seçip
 **Seçilenleri kaldır** düğmesiyle birlikte kaldırabilirsiniz. Kaynak PDF’ler diskten silinmez.
 
-**Sayfalar** tablosundaki **Sayfa**, **Durum** ve **Barkod** başlıklarına tıklayın.
+**Sayfalar** tablosunda her sayfanın çalışma alanındaki sırasını gösteren bir **ID** (1…n)
+bulunur; birden fazla PDF açıkken de tekildir. Kayıt ve onay mesajları sayfaları bu
+ID ile belirtir (ör. “1 devam sayfası bir kapağa bağlanamadı (ID 7)”), önizleme başlığı da
+ID'yi gösterir.
+
+**Sayfalar** tablosundaki **ID**, **Sayfa**, **Durum** ve **Barkod** başlıklarına tıklayın.
 İlk tıklama artan, ikinci tıklama azalan sıralama yapar; yön başlıkta gösterilir.
 Sayfa numaraları sayısal, durumlar alfabetik, barkodların sayı bölümleri sayısal olarak
 sıralanır. Bu işlem yalnızca liste görünümünü değiştirir; PDF sayfa sırası ve gruplama
@@ -308,6 +313,11 @@ ayrıca devam eder.
 (tarayıcı çıktısı), **PDF içindeki mühürler** eşiği metin ve ayrı görsellerden oluşan
 PDF’lerde kullanılır. Sayfa her iki durumda da tek görüntü olarak incelenir; yöntem
 PDF’nin yapısına göre otomatik seçilir.
+
+Önizlemede her mühür kutusunun üstünde (sayfanın üst kenarındaysa altında) bir sayı
+yazar: bu mühürün hâlâ bulunduğu en yüksek eşik değeridir. Eşik bu sayıya eşit veya
+düşükse mühür bulunur, yüksekse bulunmaz. Yanlış bulunan bir mühürün sayısından biraz
+yüksek bir eşik seçerek ayarı kalibre edebilirsiniz.
 
 **Varsayılana dön** tüm ayarları ekranda başlangıç değerlerine getirir; örnek klasörü
 seçimi temizlenir ve kayıt klasörü varsayılan `Çıktı` konumuna döner.

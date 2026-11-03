@@ -26,6 +26,7 @@ class Stamp:
     box: tuple[float, float, float, float]   # image pixels
     confidence: float
     pale_blue: bool = False         # a faint stamp whose ink is still blue
+    strength: float = 1.            # highest sensitivity at which it is still found
 
 
 def _planes(rgb):
@@ -219,9 +220,16 @@ def find_stamps(rgb, dpi, *, exclude=(), faint_blue_as_blue=False, sensitivity=1
                     and ft['sectors'] >= 7 and stroke <= .2 and parts >= 3):
                 continue
         confidence = float(min(1., .5 * min(1., ft['prominence'] / .6) + .3 * ft['cover'] + .2 * ft['arcs']))
+        # The thresholds that scale with the sensitivity setting: the stamp is
+        # kept for every sensitivity up to this value.
+        limits = [ft['cover'] / .45, ft['prominence'] / .42]
+        if kind not in ('blue', 'pale_blue'):
+            limits += [ft['cover'] / .8, ft['prominence'] / .45]
+        strength = float(min(limits))
         pale = kind == 'pale_blue'
         kind = 'blue' if pale and faint_blue_as_blue else 'faint' if pale else kind
-        found.append((score, Stamp(kind, (px - radius, py - radius, px + radius, py + radius), confidence, pale)))
+        found.append((score, Stamp(kind, (px - radius, py - radius, px + radius, py + radius), confidence, pale,
+                                   strength)))
     # Overlapping circles describe the same stamp: keep the strongest.
     found.sort(key=lambda item: item[0], reverse=True)
     kept = []
