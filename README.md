@@ -35,7 +35,7 @@ EXE veya Python çalışma ortamı depoya dahil değildir.
 ## Çevrimdışı kurulum ve çalıştırma
 
 Windows 10/11 x64 için Python dahil tek dosyalı kurulum paketi hazırlanabilir.
-`dist/Arar-Setup-2026.11.04.1-win-x64.exe` dosyasını hedef bilgisayara taşıyıp **Kur**
+`dist/Arar-Setup-2026.11.04.2-win-x64.exe` dosyasını hedef bilgisayara taşıyıp **Kur**
 düğmesine basın. Python, Tkinter, yerel kütüphaneler ve OCR dil modeli pakettedir;
 pip veya internet gerekmez. Yönetici yetkisi istemeden kullanıcı hesabına kurulur,
 Başlat menüsü ve isteğe bağlı masaüstü kısayolu oluşturur. Tarayıcı sürücüleri ayrıca kurulur.
@@ -43,7 +43,7 @@ Başlat menüsü ve isteğe bağlı masaüstü kısayolu oluşturur. Tarayıcı 
 Paketi yerel Windows x64 CPython 3.12 ortamıyla yeniden üretmek için:
 
 ```powershell
-python -S -B packaging/build_windows.py --python-home "C:\Python312" --version 2026.11.04.1
+python -S -B packaging/build_windows.py --python-home "C:\Python312" --version 2026.11.04.2
 ```
 
 Derleme mevcut yerel `libs/` ve çalışma ortamını kullanır; paket indirmez.
