@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 @dataclass
 class Settings:
+    grouping: str = 'shared'
     output_dir: str = str(ROOT / 'Çıktı')
     confirm_cover: bool = True
     notify_analysis_done: bool = True
@@ -32,9 +33,11 @@ class Settings:
                     value=data.get(key)
                     if value and str(local_path(value)) not in data['input_dirs']:
                         data['input_dirs'].append(str(local_path(value)))
-            # Settings that were removed (grouping, other barcodes, stamp
-            # position rules) are ignored; their behaviour is now fixed.
+            # Settings that were removed (other barcodes, stamp position
+            # rules) are ignored; their behaviour is now fixed.
             settings = cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+            if settings.grouping not in ('shared', 'sequential'):
+                settings.grouping = 'shared'
             settings.confirm_cover = bool(settings.confirm_cover)
             settings.notify_analysis_done = bool(settings.notify_analysis_done)
             settings.review_missing_stamp = bool(settings.review_missing_stamp)
@@ -156,25 +159,38 @@ def apply_stamp_rule(page):
     return False
 
 
-def build_groups(pages):
-    """Each cover starts a new document; never merge sources or drop a page."""
+def build_groups(pages, grouping='shared'):
+    """Never merge sources implicitly and never silently drop a page.
+
+    sequential: each cover starts a new document. shared: the following pages
+    after adjacent covers are added to each of those covers' documents.
+    """
     groups, unassigned = [], []
     source = None
-    active = None
+    active = []
+    adjacent = False
+    blocked = False
     for page in pages:
         if page.source != source:
-            source, active = page.source, None
+            source, active, adjacent, blocked = page.source, [], False, False
         state = page.effective_state
         if state in ('review', 'pending') or (state == 'cover' and not page.number):
             # A possible document boundary makes following assignments unsafe.
             unassigned.append(page)
-            active = None
+            active, adjacent, blocked = [], False, True
         elif state == 'cover':
-            active = DocumentGroup(page.number, [page])
-            groups.append(active)
+            group = DocumentGroup(page.number, [page])
+            groups.append(group)
+            if grouping == 'shared' and adjacent and not blocked:
+                active.append(group)
+            else:
+                active = [group]
+            adjacent, blocked = True, False
         elif state == 'attachment':
-            if active is not None:
-                active.pages.append(page)
+            if active and not blocked:
+                for group in active:
+                    group.pages.append(page)
+                adjacent = False
             else:
                 unassigned.append(page)
     return groups, unassigned

@@ -14,7 +14,7 @@ ve mühürleri inceleyerek kapak ve devam sayfalarını gruplar, ayrı PDF’ler
 - Mavi, siyah, soluk/renksiz ve birden fazla mühür türü için kapak değerlendirmesi.
 - **Analiz sürerken tamamlanan sayfaları inceleme ve kullanıcı kararı verme.** Arka plandaki sonuçlar manuel kararları değiştirmez.
 - İşlenen sayfalarda yeşil tik, kullanıcı incelemesi gerekenlerde kırmızı işaret.
-- Her yeni kapakla yeni bir belge başlatma; devam sayfaları bir sonraki kapağa kadar o belgeye eklenir.
+- Sırayla gruplama veya art arda kapaklara ortak devam sayfalarını ekleme.
 - Eklenip kaldırılabilen birden fazla yerel PDF klasörünü izleme, otomatik analiz ve kalıcı onay sırası.
 - İnceleme gerekmeyen otomatik taramaları ayara bağlı arşivleme, tarama listesinden tek tek veya topluca kaldırma.
 - Kapak işaretleme onay sorusunu ayarlardan açma veya kapatma.
@@ -252,9 +252,15 @@ eşleşme eşiğini geçmesi gerekir. Receiving Report barkodu ile yalnızca bu 
 varsa sayfa kapak olabilir; ayrıca siyah mühür varsa karışık mühür kuralları uygulanır.
 Seçim kaydedilir. Değişiklikten sonra analizi yeniden başlatın.
 
-Yalnızca mavi mühür tespit edilen Receiving Report sayfaları kapaktır. Her kapak yeni
-bir PDF başlatır; ardından gelen devam sayfaları bir sonraki kapağa kadar bu PDF’ye
-eklenir. Art arda gelen kapakların her biri ayrı belge olur.
+Yalnızca mavi mühür tespit edilen Receiving Report sayfaları kapaktır.
+**Ayarlar → İşlem ayarları → Belge gruplama** bölümünde iki seçenek bulunur:
+
+- **Her yeni kapakta ayrı belge başlat:** devam sayfaları bir sonraki kapağa kadar
+  aynı PDF’ye eklenir; art arda gelen kapakların her biri ayrı belge olur.
+- **Art arda kapaklara ortak devam sayfalarını ekle (kural 3):** varsayılandır;
+  art arda gelen kapakların ardındaki devam sayfaları her kapağın PDF’sine eklenir.
+
+Seçim kaydedilir ve hem açık çalışmaya hem otomatik taramalara uygulanır.
 
 **Örnekleri aç** için **Ayarlar → Örnek dosyalar → Klasör seç** ile yerel bir
 klasör seçip ayarları kaydedin. Alt klasörler de aranır. Klasör seçilmemişse ayarlara

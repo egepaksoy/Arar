@@ -553,12 +553,13 @@ class ArarApp:
     def _scan_problem(self,job):
         """Why this scan cannot be saved as is ('' when it can); review scans are cached."""
         if job['status']!='review':
-            return approval_problem(job['status'],[],job['error'])
+            return approval_problem(job['status'],[],job['error'],grouping=self.settings.grouping)
         if job['id']==self.scan_job_id:  # Open scan: decisions are live in the workspace.
-            return approval_problem('review',self.pages,reviewing=True)
+            return approval_problem('review',self.pages,grouping=self.settings.grouping,reviewing=True)
         if job['id'] not in self.scan_problems:
             stored=self.scan_store.get(job['id'])
-            self.scan_problems[job['id']]=approval_problem('review',decode_pages(stored['pages'])) if stored else ''
+            self.scan_problems[job['id']]=approval_problem('review',decode_pages(stored['pages']),
+                                                           grouping=self.settings.grouping) if stored else ''
         return self.scan_problems[job['id']]
 
     @staticmethod
@@ -709,11 +710,11 @@ class ArarApp:
                 continue
             name=Path(job['original']).name
             pages=decode_pages(job['pages']) if job['status']=='review' else []
-            problem=approval_problem(job['status'],pages,job['error'])
+            problem=approval_problem(job['status'],pages,job['error'],grouping=self.settings.grouping)
             if problem:
                 skipped.append(f'{name}: {problem}')
             else:
-                ready.append((job,build_groups(pages)[0]))
+                ready.append((job,build_groups(pages,self.settings.grouping)[0]))
         listing=lambda lines:'\n'.join('• '+line for line in lines[:12])+('\n• …' if len(lines)>12 else '')
         if not ready:
             messagebox.showinfo('Onaylanacak tarama yok','Seçilen taramalar doğrudan onaylanamıyor:\n\n'+listing(skipped),
@@ -972,7 +973,7 @@ class ArarApp:
             self._sort_page_rows()
 
     def _refresh_summary(self):
-        groups,unassigned=build_groups(self.pages)
+        groups,unassigned=build_groups(self.pages,self.settings.grouping)
         review=sum(p.effective_state=='review' or (p.effective_state=='cover' and not p.number) for p in self.pages)
         counts=(len(self.pages),sum(p.effective_state=='cover' for p in self.pages),review,len(groups))
         for label,number in zip(self.stats,counts):
@@ -1005,7 +1006,7 @@ class ArarApp:
             return 'Analiz sürüyor; bitince kaydedilebilir.'
         if not self.pages:
             return 'Henüz sayfa yok. PDF ekleyin veya bir tarama açın.'
-        return approval_problem('review',self.pages,reviewing=True)
+        return approval_problem('review',self.pages,grouping=self.settings.grouping,reviewing=True)
 
     def analyze(self):
         if self.busy or not self.pages:
@@ -1119,7 +1120,7 @@ class ArarApp:
 
     def show_group_pages(self,event=None):
         item=self.group_tree.identify_row(event.y) if event else ''
-        groups,_=build_groups(self.pages)
+        groups,_=build_groups(self.pages,self.settings.grouping)
         if item and int(item)<len(groups):
             group=groups[int(item)]
             lines=[f'{Path(p.source).name} • Sayfa {p.index+1}' for p in group.pages]
@@ -1128,7 +1129,7 @@ class ArarApp:
     def export(self):
         if self.busy:
             return
-        groups,unassigned=build_groups(self.pages)
+        groups,unassigned=build_groups(self.pages,self.settings.grouping)
         if not groups or unassigned:
             messagebox.showwarning('İnceleme tamamlanmadı',self._export_problem() or
                                    'Tüm sayfalar bir belgeye atanmalı ve kapak kararları tamamlanmalı.')
@@ -1143,7 +1144,7 @@ class ArarApp:
         self._save_scan_review()
         job=self.scan_store.get(job_id)
         # Freeze decisions before handing them to the export worker.
-        groups,_=build_groups([replace(page) for page in self.pages])
+        groups,_=build_groups([replace(page) for page in self.pages],self.settings.grouping)
         self._set_busy(True)
         self.stop_btn.configure(state='disabled')
         self.operation='export'
@@ -1215,7 +1216,15 @@ class ArarApp:
         tabs.add(scanning,text='Otomatik tarama')
         output_dir=tk.StringVar(value=self.settings.output_dir)
 
-        self.label(general,'Kapak işaretleme',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,8))
+        self.label(general,'Belge gruplama',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,8))
+        grouping=tk.StringVar(value=self.settings.grouping)
+        ttk.Radiobutton(general,text='Her yeni kapakta ayrı belge başlat',variable=grouping,value='sequential').pack(anchor='w',padx=20,pady=7)
+        self.label(general,'Sayfalar bir sonraki kapağa kadar aynı belgeye eklenir.',
+                   size=9,color=MUTED).pack(anchor='w',padx=43)
+        ttk.Radiobutton(general,text='Art arda kapaklara ortak devam sayfalarını ekle (kural 3)',variable=grouping,value='shared').pack(anchor='w',padx=20,pady=(16,7))
+        self.label(general,'Peş peşe kapaklardan sonraki sayfalar her kapağa eklenir.',
+                   size=9,color=MUTED).pack(anchor='w',padx=43)
+        self.label(general,'Kapak işaretleme',size=12,bold=True).pack(anchor='w',padx=20,pady=(16,6))
         confirm_cover=tk.BooleanVar(value=self.settings.confirm_cover)
         ttk.Checkbutton(general,text='Kapak olarak işaretlerken onay sor',variable=confirm_cover).pack(anchor='w',padx=20)
         self.label(general,'Tamamlanma bildirimi',size=12,bold=True).pack(anchor='w',padx=20,pady=(12,6))
@@ -1369,7 +1378,7 @@ class ArarApp:
                     raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.') from None
                 if not 50<=stamp<=99 or not 50<=scan<=99:
                     raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.')
-                updated=replace(self.settings,confirm_cover=confirm_cover.get(),
+                updated=replace(self.settings,grouping=grouping.get(),confirm_cover=confirm_cover.get(),
                     notify_analysis_done=notify_done.get(),stamp_threshold=stamp,
                     scan_stamp_threshold=scan,
                     faint_blue_as_blue=faint_blue.get(),
@@ -1381,6 +1390,8 @@ class ArarApp:
             except (OSError,ValueError) as exc:
                 messagebox.showerror('Ayarlar kaydedilemedi',str(exc),parent=dialog)
                 return
+            if updated.grouping!=self.settings.grouping:
+                self.scan_problems.clear()  # Cached save problems depend on the grouping.
             self.settings=updated
             dialog.destroy()
             self._refresh_summary()
@@ -1390,7 +1401,7 @@ class ArarApp:
             input_dirs.clear()
             refresh_input_dirs()
             for variable,value in (
-                (confirm_cover,defaults.confirm_cover),
+                (grouping,defaults.grouping),(confirm_cover,defaults.confirm_cover),
                 (notify_done,defaults.notify_analysis_done),(review_missing,defaults.review_missing_stamp),
                 (faint_blue,defaults.faint_blue_as_blue),
                 (stamp_value,defaults.stamp_threshold),(scan_value,defaults.scan_stamp_threshold),

@@ -281,7 +281,7 @@ class ScanWorker:
                     break
             if self.interrupted(job):
                 return
-            groups,unassigned=build_groups(pages)
+            groups,unassigned=build_groups(pages,settings.grouping)
             if settings.auto_save_scans and groups and not unassigned and not any(page.first_page_error for page in pages):
                 self.auto_archive(job,pages,groups,settings)
                 return
@@ -360,7 +360,7 @@ def write_archive(groups,folder,job_id,original='',*,automatic=False):
         raise
 
 
-def approval_problem(status,pages,error='',*,reviewing=False):
+def approval_problem(status,pages,error='',*,grouping='shared',reviewing=False):
     """Why a scan cannot be saved as is; '' when it can.
 
     reviewing: the pages are already open in the workspace, so the advice
@@ -376,7 +376,7 @@ def approval_problem(status,pages,error='',*,reviewing=False):
     if any(page.first_page_error and not page.decision for page in pages):
         return ('İlk sayfada Receiving Report No ve mühür bulunamadı. '+
                 ('İlk sayfaya sağdaki panelden karar verin.' if reviewing else 'Taramayı inceleyin.'))
-    groups,unassigned=build_groups(pages)
+    groups,unassigned=build_groups(pages,grouping)
     # Pages are named by their ID: the 1..n position shown in the page list,
     # which stays unique when several PDFs are open together.
     ids={id(page):number for number,page in enumerate(pages,1)}

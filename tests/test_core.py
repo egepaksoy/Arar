@@ -32,7 +32,8 @@ class SettingsTests(unittest.TestCase):
             # Keys of removed settings are ignored.
             (settings_dir/'settings.json').write_text('{"grouping":"shared","review_other_barcodes":true}',encoding='utf-8')
             settings=Settings.load()
-            self.assertFalse(hasattr(settings,'grouping'))
+            self.assertEqual(settings.grouping,'shared')
+            self.assertFalse(hasattr(settings,'review_other_barcodes'))
             self.assertTrue(settings.confirm_cover)
             self.assertTrue(settings.notify_analysis_done)
             self.assertEqual((settings.stamp_threshold,settings.scan_stamp_threshold),(85,74))
@@ -93,16 +94,33 @@ class GroupingTests(unittest.TestCase):
 
     def test_sequential_boundaries_and_preserved_order(self):
         pages=[page(0,'cover',number='A'),page(1),page(2,'cover',number='B'),page(3)]
-        groups,left=build_groups(pages)
+        groups,left=build_groups(pages,'sequential')
         self.assertFalse(left)
         self.assertEqual([[p.index for p in g.pages] for g in groups],[[0,1],[2,3]])
 
-    def test_each_cover_starts_its_own_document(self):
+    def test_sequential_each_cover_starts_its_own_document(self):
         pages=[page(0,'cover',number='A'),page(1,'cover',number='B'),page(2),page(3),
                page(4,'cover',number='C'),page(5)]
-        groups,left=build_groups(pages)
+        groups,left=build_groups(pages,'sequential')
         self.assertFalse(left)
         self.assertEqual([[p.index for p in g.pages] for g in groups],[[0],[1,2,3],[4,5]])
+
+    def test_shared_adjacent_covers_and_next_batch(self):
+        pages=[page(0,'cover',number='A'),page(1,'cover',number='B'),page(2),page(3),
+               page(4,'cover',number='C'),page(5)]
+        groups,left=build_groups(pages,'shared')
+        self.assertFalse(left)
+        self.assertEqual([[p.index for p in g.pages] for g in groups],[[0,2,3],[1,2,3],[4,5]])
+
+    def test_invalid_grouping_falls_back_to_shared(self):
+        with tempfile.TemporaryDirectory() as folder,patch('arar.models.ROOT',Path(folder)):
+            directory=Path(folder)/'.arar'
+            directory.mkdir()
+            (directory/'settings.json').write_text('{"grouping":"other"}',encoding='utf-8')
+            self.assertEqual(Settings.load().grouping,'shared')
+            (directory/'settings.json').write_text('{"grouping":"sequential"}',encoding='utf-8')
+            self.assertEqual(Settings.load().grouping,'sequential')
+
     def test_review_blocks_following_assignment_until_decision(self):
         pages=[page(0,'cover',number='A'),page(1,'review'),page(2)]
         groups,left=build_groups(pages)

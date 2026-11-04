@@ -546,7 +546,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(list(archive.rglob('Arar_onay.json')),[])
 
     def test_defaults_restore_every_setting_only_after_save(self):
-        previous=Settings(confirm_cover=False,
+        previous=Settings(grouping='sequential',confirm_cover=False,
             notify_analysis_done=False,stamp_threshold=95,scan_stamp_threshold=90,
             review_missing_stamp=False,examples_dir=self.temp.name,output_dir=self.temp.name)
         previous.faint_blue_as_blue=True
@@ -624,7 +624,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(tree.get_children(),('0','2','1'))
         self.assertEqual(tree.selection(),('1',))
         self.assertEqual([p.index for p in self.app.pages],[0,1,9])
-        groups,_=build_groups(self.app.pages)
+        groups,_=build_groups(self.app.pages,self.app.settings.grouping)
         self.assertEqual([p.index for p in groups[0].pages],[0,1])
         with patch('arar.app.messagebox.askyesno',return_value=True):
             self.app.barcode_var.set('MANUAL')
@@ -663,9 +663,13 @@ class DesktopTests(unittest.TestCase):
             self.app.show_settings()
             self.root.update()
             dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
-            self.assertFalse([widget for widget in self.descendants(dialog) if widget.winfo_class() in
-                              ('TCheckbutton','TRadiobutton') and ('başka barkod' in widget.cget('text')
-                              or 'ortak devam' in widget.cget('text') or 'ayrı belge' in widget.cget('text'))])
+            self.assertFalse([widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
+                              and 'başka barkod' in widget.cget('text')])
+            sequential=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TRadiobutton'
+                            and widget.cget('text')=='Her yeni kapakta ayrı belge başlat')
+            self.assertTrue(any(widget.winfo_class()=='TRadiobutton' and 'ortak devam' in widget.cget('text')
+                                for widget in self.descendants(dialog)))
+            sequential.invoke()
             missing=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
                          and widget.cget('text')=='Mühür bulunamazsa kullanıcı incelemesine al')
             missing.invoke()
@@ -677,6 +681,7 @@ class DesktopTests(unittest.TestCase):
             save.invoke()
             self.root.update()
             loaded=Settings.load()
+            self.assertEqual(loaded.grouping,'sequential')
             self.assertFalse(loaded.review_missing_stamp)
             self.assertEqual(Path(loaded.examples_dir),Path(self.temp.name).resolve())
 
