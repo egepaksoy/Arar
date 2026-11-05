@@ -237,10 +237,14 @@ Diğer incelemeler sağdaki panelden yapılır; analiz bu kararları beklemeden 
 Önceden verilen manuel kapak onayı korunur.
 
 Mavi olmayan mühürlü Receiving Report sayfaları, sayfanın PDF içindeki konumundan
-bağımsız olarak şöyle değerlendirilir:
+bağımsız olarak **Ayarlar → Mühür kararları** bölümündeki iki seçenekle değerlendirilir:
 
-- Mavi ile birlikte renksiz (siyah/soluk) mühür varsa sayfa sağdaki panelde incelemeye alınır.
-- Yalnızca renksiz (siyah/soluk) mühür varsa sayfa otomatik olarak devam sayfası olur.
+- **Mavi + renksiz mühür birlikteyse incelemeye al:** varsayılan olarak açıktır.
+- **Yalnızca renksiz mühür varsa incelemeye al:** siyah veya soluk mühür için geçerlidir;
+  varsayılan olarak açıktır.
+
+Açık seçenekte sayfanın kapak olup olmadığı sağdaki panelden sorulur. Kapalı seçenekte
+sayfa soru sorulmadan devam sayfası olur.
 
 İnceleme bekleyen sayfa için onay penceresi açılmaz; sonraki sayfalar işlenmeye devam eder.
 
@@ -325,8 +329,8 @@ seçimi temizlenir ve kayıt klasörü varsayılan `Çıktı` konumuna döner.
 
 **Ayarlar → Mühür doğruluğu → Mühür bulunamazsa kullanıcı incelemesine al** seçeneği
 varsayılan olarak açıktır. Kapatılırsa Receiving Report bulunan ama mühür bulunmayan
-sayfalar devam sayfası adayı olur. Siyah/soluk/karışık mühürler yukarıdaki sabit
-kurallarla değerlendirilir. İlk sayfada hem barkod hem mühür
+sayfalar devam sayfası adayı olur. Siyah/soluk/karışık mühürler yukarıdaki
+**Mühür kararları** seçenekleriyle değerlendirilir. İlk sayfada hem barkod hem mühür
 bulunamaması kontrolü devam eder.
 Ayar kaydedilir; değişiklikten sonra analizi yeniden başlatın.
 

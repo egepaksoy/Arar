@@ -276,7 +276,7 @@ class ScanWorker:
                              faint_blue_as_blue=settings.faint_blue_as_blue)
                 if self.interrupted(job):
                     return
-                apply_stamp_rule(page)
+                apply_stamp_rule(page,settings.review_mixed_stamp,settings.review_plain_stamp)
                 if page.first_page_error:
                     break
             if self.interrupted(job):

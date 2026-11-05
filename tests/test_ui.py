@@ -548,7 +548,8 @@ class DesktopTests(unittest.TestCase):
     def test_defaults_restore_every_setting_only_after_save(self):
         previous=Settings(grouping='sequential',confirm_cover=False,
             notify_analysis_done=False,stamp_threshold=95,scan_stamp_threshold=90,
-            review_missing_stamp=False,examples_dir=self.temp.name,output_dir=self.temp.name)
+            review_missing_stamp=False,review_mixed_stamp=False,review_plain_stamp=False,
+            examples_dir=self.temp.name,output_dir=self.temp.name)
         previous.faint_blue_as_blue=True
         previous.auto_save_scans=True
         self.app.settings=previous
@@ -789,15 +790,18 @@ class DesktopTests(unittest.TestCase):
                 question.assert_not_called()
                 error.assert_not_called()
                 self.assertEqual(processed,[0,1])
-                # Black or faint stamps alone make a report page a following page.
-                plain=barcode and stamp in ('black','faint')
-                self.assertEqual(self.app.pages[0].effective_state,'attachment' if plain else 'review')
+                # By default black or faint stamps on a report page also need review.
+                self.assertEqual(self.app.pages[0].effective_state,'review')
                 self.assertFalse(self.app.pages[0].first_page_error)
 
-    def test_nonblue_pages_follow_the_fixed_stamp_rule_without_prompting(self):
-        for stamp,expected in (('mixed','review'),('black','attachment'),('faint','attachment')):
-            with self.subTest(stamp=stamp):
+    def test_nonblue_pages_follow_review_settings_without_prompting(self):
+        cases=[(stamp,field,ask) for stamp,field in (('mixed','review_mixed_stamp'),('black','review_plain_stamp'),
+               ('faint','review_plain_stamp')) for ask in (False,True)]
+        for stamp,field,ask in cases:
+            with self.subTest(stamp=stamp,ask=ask):
+                expected='review' if ask else 'attachment'
                 self.app.pages=[PageResult(str(self.source),i) for i in range(3)]
+                setattr(self.app.settings,field,ask)
                 def analyze(result,cancel,**kwargs):
                     result.barcode='FIRST' if result.index==0 else 'LATER' if result.index==2 else ''
                     result.target_found=result.index in (0,2)
@@ -827,14 +831,22 @@ class DesktopTests(unittest.TestCase):
         continuation.assert_not_called()
         error.assert_not_called()
         self.assertEqual([page.effective_state for page in self.app.pages],['cover','cover'])
-    def test_stamp_position_questions_are_gone(self):
-        self.app.show_settings()
-        self.root.update()
-        dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
-        texts=[widget.cget('text') for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton']
-        self.assertNotIn('Mavi + renksiz mühür birlikteyse incelemeye al',texts)
-        self.assertNotIn('Yalnızca renksiz mühür varsa incelemeye al',texts)
-        self.assertIn('Soluk mavi mühürleri mavi olarak işle',texts)
+    def test_stamp_review_settings_are_saved(self):
+        with patch('arar.models.ROOT',Path(self.temp.name)):
+            self.app.show_settings()
+            self.root.update()
+            dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+            fields=[widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
+                    and widget.cget('text') in ('Mavi + renksiz mühür birlikteyse incelemeye al','Yalnızca renksiz mühür varsa incelemeye al')]
+            self.assertEqual([widget.instate(['selected']) for widget in fields],[True,True])
+            for widget in fields:
+                widget.invoke()
+            save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                      and widget.cget('text')=='Ayarları kaydet')
+            save.invoke()
+            self.root.update()
+            loaded=Settings.load()
+            self.assertEqual([loaded.review_mixed_stamp,loaded.review_plain_stamp],[False,False])
     def test_faint_blue_setting_is_saved_and_restored_in_dialog(self):
         with patch('arar.models.ROOT',Path(self.temp.name)):
             for expected in (False,True):

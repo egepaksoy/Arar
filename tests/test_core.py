@@ -38,6 +38,8 @@ class SettingsTests(unittest.TestCase):
             self.assertTrue(settings.notify_analysis_done)
             self.assertEqual((settings.stamp_threshold,settings.scan_stamp_threshold),(85,74))
             self.assertTrue(settings.review_missing_stamp)
+            self.assertTrue(settings.review_mixed_stamp)
+            self.assertTrue(settings.review_plain_stamp)
             self.assertFalse(settings.faint_blue_as_blue)
             self.assertEqual(settings.examples_dir,'')
 
@@ -144,13 +146,18 @@ class GroupingTests(unittest.TestCase):
 
 
 class ContextRuleTests(unittest.TestCase):
-    def test_mixed_stamps_need_review_and_plain_stamps_follow_anywhere(self):
-        for stamp,state,review in (('mixed','review',True),('black','attachment',False),('faint','attachment',False)):
-            for index in (1,5):   # before and after a following page: the same rule
-                with self.subTest(stamp=stamp,index=index):
-                    result=PageResult('one.pdf',index,barcode='A',target_found=True,stamp=stamp,state='review')
-                    self.assertEqual(apply_stamp_rule(result),review)
-                    self.assertEqual(result.state,state)
+    def test_nonblue_stamps_follow_each_review_setting_anywhere(self):
+        for stamp in ('mixed','black','faint'):
+            for mixed,plain in ((True,True),(True,False),(False,True),(False,False)):
+                review=mixed if stamp=='mixed' else plain
+                for index in (1,5):   # before and after a following page: the same rule
+                    with self.subTest(stamp=stamp,mixed=mixed,plain=plain,index=index):
+                        result=PageResult('one.pdf',index,barcode='A',target_found=True,stamp=stamp,state='review')
+                        self.assertEqual(apply_stamp_rule(result,mixed,plain),review)
+                        self.assertEqual(result.state,'review' if review else 'attachment')
+        decided=PageResult('one.pdf',1,barcode='A',target_found=True,stamp='black',decision='cover')
+        self.assertFalse(apply_stamp_rule(decided))
+        self.assertEqual(decided.effective_state,'cover')
         blue=PageResult('one.pdf',1,barcode='A',target_found=True,stamp='blue',state='cover')
         self.assertFalse(apply_stamp_rule(blue))
         self.assertEqual(blue.state,'cover')

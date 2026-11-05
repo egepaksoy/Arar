@@ -16,6 +16,8 @@ class Settings:
     scan_stamp_threshold: int = 74
     faint_blue_as_blue: bool = False
     review_missing_stamp: bool = True
+    review_mixed_stamp: bool = True
+    review_plain_stamp: bool = True
     examples_dir: str = ''
     auto_watch: bool = False
     auto_save_scans: bool = False
@@ -41,6 +43,8 @@ class Settings:
             settings.confirm_cover = bool(settings.confirm_cover)
             settings.notify_analysis_done = bool(settings.notify_analysis_done)
             settings.review_missing_stamp = bool(settings.review_missing_stamp)
+            settings.review_mixed_stamp = bool(settings.review_mixed_stamp)
+            settings.review_plain_stamp = bool(settings.review_plain_stamp)
             settings.faint_blue_as_blue = bool(settings.faint_blue_as_blue)
             settings.auto_watch = bool(settings.auto_watch)
             settings.auto_save_scans = bool(settings.auto_save_scans)
@@ -143,19 +147,21 @@ class DocumentGroup:
     pages: list[PageResult] = field(default_factory=list)
 
 
-def apply_stamp_rule(page):
+def apply_stamp_rule(page, review_mixed=True, review_plain=True):
     """Decide a Receiving Report page that has non-blue stamps; True if it needs review.
 
-    Blue together with black/faint stamps needs a user decision; black or faint
-    stamps alone make the page a following page. This holds wherever the page
-    is in its PDF.
+    review_mixed / review_plain: whether blue together with black/faint stamps,
+    or black/faint stamps alone, need a user decision. Otherwise the page
+    becomes a following page. This holds wherever the page is in its PDF.
     """
     if not page.target_found or not page.number or page.stamp not in ('mixed','black','faint'):
         return False
-    if page.stamp=='mixed':
-        page.state,page.reason='review','Mavi ve renksiz mühür birlikte bulundu. Kapak olamaz; sağdaki panelden inceleyin.'
+    mixed=page.stamp=='mixed'
+    description='Mavi ve renksiz mühür birlikte bulundu.' if mixed else 'Yalnızca renksiz mühür bulundu.'
+    if review_mixed if mixed else review_plain:
+        page.state,page.reason='review',description+' Kapak olup olmadığını sağdaki panelden belirleyin.'
         return not page.decision
-    page.state,page.reason='attachment','Yalnızca renksiz mühür bulundu; devam sayfası yapıldı.'
+    page.state,page.reason='attachment',description+' Ayar gereği devam sayfası yapıldı.'
     return False
 
 

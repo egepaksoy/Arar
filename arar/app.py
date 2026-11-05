@@ -1043,6 +1043,8 @@ class ArarApp:
         scan_stamp_threshold=self.settings.scan_stamp_threshold/100
         review_missing_stamp=self.settings.review_missing_stamp
         faint_blue_as_blue=self.settings.faint_blue_as_blue
+        review_mixed=self.settings.review_mixed_stamp
+        review_plain=self.settings.review_plain_stamp
         def work():
             for i,page in enumerate(snapshot):
                 if self.cancel.is_set():
@@ -1056,7 +1058,7 @@ class ArarApp:
                     page.state,page.reason='review','Sayfa işlenemedi: '+str(exc)
                 if self.cancel.is_set():
                     break
-                apply_stamp_rule(page)
+                apply_stamp_rule(page,review_mixed,review_plain)
                 self.events.put(('page',i,page))
                 if page.first_page_error:
                     self.cancel.set()
@@ -1267,11 +1269,17 @@ class ArarApp:
         self.label(decisions,'Açıkken mavi renk içeren soluk mühürler de mavi sayılır. Siyah ve gri mühürler '
                    'mavi sayılmaz. PDF içindeki ve taranmış mühürlerde geçerlidir. Kaydettikten sonra analizi yeniden başlatın.',
                    size=9,color=MUTED,justify='left',wraplength=555).pack(anchor='w',padx=20,pady=(4,10))
-        self.label(decisions,'Yalnızca mavi mühürlü Receiving Report sayfası kapaktır ve yeni bir belge başlatır. '
-                   'Mavi ile birlikte renksiz (siyah/soluk) mühür varsa sayfa sağdaki panelde incelemeye alınır; '
-                   'yalnızca renksiz mühür varsa sayfa devam sayfası olur. İlk sayfada hem Receiving Report '
-                   'barkodu hem mühür bulunamazsa hata gösterilir ve analiz durur.',size=9,color=MUTED,
-                   justify='left',wraplength=555).pack(anchor='w',padx=20,pady=(0,12))
+        self.label(decisions,'Yalnızca mavi mühürlü Receiving Report sayfası otomatik kapak olur ve yeni bir belge başlatır.',
+                   size=9,color=MUTED,justify='left',wraplength=555).pack(anchor='w',padx=20,pady=(0,8))
+        review_mixed=tk.BooleanVar(value=self.settings.review_mixed_stamp)
+        review_plain=tk.BooleanVar(value=self.settings.review_plain_stamp)
+        ttk.Checkbutton(decisions,text='Mavi + renksiz mühür birlikteyse incelemeye al',variable=review_mixed).pack(anchor='w',padx=20,pady=3)
+        ttk.Checkbutton(decisions,text='Yalnızca renksiz mühür varsa incelemeye al',variable=review_plain).pack(anchor='w',padx=20,pady=3)
+        self.label(decisions,'Receiving Report barkodu olan sayfa için geçerlidir. Açık seçenekte kapak olup olmadığı '
+                   'sağdaki panelden sorulur; analiz beklemeden devam eder. Kapalı seçenekte sayfa doğrudan devam '
+                   'sayfası olur. İlk sayfada hem Receiving Report barkodu hem mühür bulunamazsa hata gösterilir '
+                   've analiz durur. Kaydettikten sonra analizi yeniden başlatın.',size=9,color=MUTED,
+                   justify='left',wraplength=555).pack(anchor='w',padx=20,pady=(6,12))
 
         self.label(examples,'Örnek PDF klasörü',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,12))
         examples_dir=tk.StringVar(value=self.settings.examples_dir)
@@ -1383,6 +1391,7 @@ class ArarApp:
                     scan_stamp_threshold=scan,
                     faint_blue_as_blue=faint_blue.get(),
                     review_missing_stamp=review_missing.get(),
+                    review_mixed_stamp=review_mixed.get(),review_plain_stamp=review_plain.get(),
                     examples_dir=examples_dir.get(),output_dir=output_dir.get(),
                     auto_watch=auto_watch.get(),auto_save_scans=auto_save.get(),input_dirs=list(input_dirs),
                     archive_dir=archive_dir.get())
@@ -1404,6 +1413,7 @@ class ArarApp:
                 (grouping,defaults.grouping),(confirm_cover,defaults.confirm_cover),
                 (notify_done,defaults.notify_analysis_done),(review_missing,defaults.review_missing_stamp),
                 (faint_blue,defaults.faint_blue_as_blue),
+                (review_mixed,defaults.review_mixed_stamp),(review_plain,defaults.review_plain_stamp),
                 (stamp_value,defaults.stamp_threshold),(scan_value,defaults.scan_stamp_threshold),
                 (examples_dir,defaults.examples_dir),(output_dir,defaults.output_dir),
                 (auto_watch,defaults.auto_watch),
