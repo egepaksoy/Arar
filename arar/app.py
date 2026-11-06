@@ -26,6 +26,7 @@ TEAL='#087f8c'
 AMBER='#aa6910'
 GREEN='#16803d'
 RED='#c62828'
+BLUE='#1f66c1'
 STATE_LABELS={'pending':'Bekliyor','cover':'Kapak','attachment':'Devam','review':'İncele'}
 STAMP_LABELS={'none':'Bulunamadı','blue':'Mavi mühür','black':'Siyah mühür',
               'faint':'Soluk / renksiz mühür','mixed':'Birden fazla mühür türü'}
@@ -106,6 +107,12 @@ class ArarApp:
                         font=('Segoe UI',10,'bold'))
         style.map('Primary.TButton',background=[('active','#066a75'),('disabled','#9bbec2')],
                   foreground=[('disabled',WHITE)])
+        # Scan controls: blue starts or continues, red stops; same shape as Primary.
+        for name,color,active,disabled in (('Blue',BLUE,'#17519b','#a8c2e4'),('Danger',RED,'#a31f1f','#e5b1b1')):
+            style.configure(name+'.TButton',background=color,foreground=WHITE,borderwidth=0,
+                            font=('Segoe UI',10,'bold'))
+            style.map(name+'.TButton',background=[('active',active),('disabled',disabled)],
+                      foreground=[('disabled',WHITE)])
         style.configure('Compact.TButton',font=('Segoe UI',9),padding=(6,8))
         style.configure('TCheckbutton',background=WHITE,foreground=TEXT)
         style.configure('TRadiobutton',background=WHITE,foreground=TEXT)
@@ -131,11 +138,11 @@ class ArarApp:
         self.add_btn.pack(side='left',padx=4)
         self.example_btn=ttk.Button(controls,text='Örnekleri aç',command=self.add_examples)
         self.example_btn.pack(side='left',padx=4)
-        self.analyze_btn=ttk.Button(controls,text='Analizi başlat',style='Primary.TButton',command=self.analyze)
+        self.analyze_btn=ttk.Button(controls,text='Analizi başlat',style='Blue.TButton',command=self.analyze)
         self.analyze_btn.pack(side='left',padx=4)
-        self.stop_btn=ttk.Button(controls,text='Taramayı durdur',command=self.stop,state='disabled')
+        self.stop_btn=ttk.Button(controls,text='Taramayı durdur',style='Danger.TButton',command=self.stop,state='disabled')
         self.stop_btn.pack(side='left',padx=4)
-        self.continue_btn=ttk.Button(controls,text='Taramaya devam et',command=self.continue_analysis,state='disabled')
+        self.continue_btn=ttk.Button(controls,text='Taramaya devam et',style='Blue.TButton',command=self.continue_analysis,state='disabled')
         self.continue_btn.pack(side='left',padx=4)
         self.settings_btn=ttk.Button(controls,text='Ayarlar',command=self.show_settings)
         self.settings_btn.pack(side='left',padx=(12,0))
