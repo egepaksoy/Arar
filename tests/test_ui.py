@@ -546,7 +546,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(list(archive.rglob('Arar_onay.json')),[])
 
     def test_defaults_restore_every_setting_only_after_save(self):
-        previous=Settings(grouping='sequential',confirm_cover=False,
+        previous=Settings(grouping='sequential',confirm_cover=False,pause_before_new_document=True,
             notify_analysis_done=False,stamp_threshold=95,scan_stamp_threshold=90,
             review_missing_stamp=False,review_mixed_stamp=False,review_plain_stamp=False,
             examples_dir=self.temp.name,output_dir=self.temp.name)
@@ -831,6 +831,72 @@ class DesktopTests(unittest.TestCase):
         continuation.assert_not_called()
         error.assert_not_called()
         self.assertEqual([page.effective_state for page in self.app.pages],['cover','cover'])
+
+    def analyze_documents(self,states,answer=True,sources=None):
+        """Run the analysis over pages decided as states; returns the pause dialog mock."""
+        sources=sources or [str(self.source)]*len(states)
+        self.app.pages=[PageResult(source,i) for i,source in enumerate(sources)]
+        def analyze(result,cancel,**kwargs):
+            cover=states[result.index]=='cover'
+            result.barcode=f'R{result.index}' if cover else ''
+            result.target_found=cover
+            result.stamp='blue' if cover else 'none'
+            result.state=states[result.index]
+            return result
+        with patch('arar.app.analyze_page',side_effect=analyze), \
+                patch.object(self.app,'_ask_continue_scan',return_value=answer) as ask:
+            self.app.analyze()
+            self.pump_until(lambda:not self.app.busy)
+        return ask
+
+    def test_cover_after_following_page_pauses_and_continues_when_asked(self):
+        self.app.settings.pause_before_new_document=True
+        ask=self.analyze_documents(['cover','attachment','cover','attachment','cover'])
+        self.assertEqual([call.args[0].index for call in ask.call_args_list],[2,4])
+        self.assertEqual([page.effective_state for page in self.app.pages],
+                         ['cover','attachment','cover','attachment','cover'])
+
+    def test_stop_answer_ends_the_scan_at_the_new_cover(self):
+        self.app.settings.pause_before_new_document=True
+        ask=self.analyze_documents(['cover','attachment','cover','attachment'],answer=False)
+        ask.assert_called_once()
+        self.assertEqual([page.effective_state for page in self.app.pages],['cover','attachment','cover','pending'])
+        self.assertIn('durduruldu',self.app.status_var.get())
+
+    def test_no_pause_when_off_for_adjacent_covers_or_a_new_pdf(self):
+        self.assertFalse(Settings().pause_before_new_document)
+        self.analyze_documents(['cover','attachment','cover']).assert_not_called()
+        self.app.settings.pause_before_new_document=True
+        self.analyze_documents(['cover','cover','attachment']).assert_not_called()
+        other=str(Path(self.temp.name)/'other.pdf')
+        self.analyze_documents(['cover','attachment','cover'],
+                               sources=[str(self.source),str(self.source),other]).assert_not_called()
+
+    def test_pause_setting_is_saved(self):
+        with patch('arar.models.ROOT',Path(self.temp.name)):
+            self.app.show_settings()
+            self.root.update()
+            dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+            option=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
+                        and widget.cget('text')=='Devam sayfasından sonra kapak gelirse taramayı durdurup sor')
+            self.assertFalse(option.instate(['selected']))
+            option.invoke()
+            save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                      and widget.cget('text')=='Ayarları kaydet')
+            save.invoke()
+            self.root.update()
+            self.assertTrue(Settings.load().pause_before_new_document)
+
+    def test_continue_dialog_buttons_answer_the_question(self):
+        page=PageResult(str(self.source),1,barcode='R1',target_found=True)
+        for label,expected in (('Taramaya Devam Et',True),('Taramayı Durdur',False)):
+            with self.subTest(label=label):
+                def press():
+                    dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
+                    next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
+                         and widget.cget('text')==label).invoke()
+                self.root.after(50,press)
+                self.assertIs(self.app._ask_continue_scan(page),expected)
     def test_stamp_review_settings_are_saved(self):
         with patch('arar.models.ROOT',Path(self.temp.name)):
             self.app.show_settings()

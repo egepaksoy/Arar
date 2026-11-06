@@ -230,11 +230,21 @@ dosya açıldığında hata gösterilir. Diğer taramalar sırada işlenebilir.
 
 Receiving Report barkodu olmayan sayfalarda başka barkodlar bulunsa da sayfa
 incelemeye alınmaz, devam sayfası olur; bulunan barkodlar yalnızca raporlanır.
-Analiz sırasında “Devam edilsin mi?” veya otomatik kapak onayı penceresi açılmaz.
+Analiz sırasında otomatik kapak onayı penceresi açılmaz; aşağıdaki belgeler arası
+bekleme ayarı dışında “Devam edilsin mi?” sorusu da sorulmaz.
 Yalnızca PDF’nin ilk sayfasında hem Receiving Report barkodu hem de herhangi bir
 mühür bulunamazsa hata gösterilir ve analiz durdurulur; sonraki sayfalar işlenmez.
 Diğer incelemeler sağdaki panelden yapılır; analiz bu kararları beklemeden devam eder.
 Önceden verilen manuel kapak onayı korunur.
+
+**Ayarlar → İşlem ayarları → Belgeler arası bekleme → Devam sayfasından sonra kapak
+gelirse taramayı durdurup sor** seçeneği varsayılan olarak kapalıdır. Açıkken analiz
+sırasında aynı PDF’de bir devam sayfasının ardından kapak sayfası gelirse tarama bekler
+ve **Taramayı Durdur** / **Taramaya Devam Et** sorulur. Böylece biten belgenin
+sayfalarını zımbalamak vb. için zaman kalır. Durdurulursa kalan sayfalar işlenmeden
+bekler; **Analizi başlat** ile yeniden başlatılabilir. Art arda gelen kapaklarda ve
+farklı PDF’lere geçişte soru sorulmaz. Arka planda çalışan otomatik klasör taramaları
+bu ayardan etkilenmez.
 
 Mavi olmayan mühürlü Receiving Report sayfaları, sayfanın PDF içindeki konumundan
 bağımsız olarak **Ayarlar → Mühür kararları** bölümündeki iki seçenekle değerlendirilir:

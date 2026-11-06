@@ -1045,7 +1045,9 @@ class ArarApp:
         faint_blue_as_blue=self.settings.faint_blue_as_blue
         review_mixed=self.settings.review_mixed_stamp
         review_plain=self.settings.review_plain_stamp
+        pause_before_new_document=self.settings.pause_before_new_document
         def work():
+            previous=None
             for i,page in enumerate(snapshot):
                 if self.cancel.is_set():
                     break
@@ -1063,8 +1065,46 @@ class ArarApp:
                 if page.first_page_error:
                     self.cancel.set()
                     break
+                # A cover right after a following page in the same PDF starts a new
+                # document: wait so the user can handle the finished one (staple it).
+                if (pause_before_new_document and previous is not None and previous.source==page.source
+                        and previous.effective_state=='attachment' and page.effective_state=='cover'):
+                    self.resume.clear()
+                    self.events.put(('pause',i,page))
+                    while not self.resume.wait(.1):
+                        if self.cancel.is_set():
+                            break
+                    if self.cancel.is_set():
+                        break
+                previous=page
             self.events.put(('analysis_done',self.cancel.is_set()))
         threading.Thread(target=work,daemon=True).start()
+
+    def _ask_continue_scan(self,page):
+        """Ask whether to go on after a new document's cover; True continues."""
+        dialog=tk.Toplevel(self.root)
+        dialog.title('Yeni belge başlıyor')
+        dialog.configure(bg=WHITE)
+        dialog.resizable(False,False)
+        dialog.transient(self.root)
+        answer={'continue':False}
+        self.label(dialog,'Devam sayfasından sonra yeni bir kapak bulundu',size=12,bold=True).pack(anchor='w',padx=20,pady=(18,6))
+        self.label(dialog,f'{Path(page.source).name} • Sayfa {page.index+1}\nReceiving Report No: {page.number}\n\n'
+                   'Önceki belgenin sayfalarını zımbalama vb. işlemler için tarama bekletildi.',
+                   size=10,color=MUTED,justify='left').pack(anchor='w',padx=20)
+        buttons=tk.Frame(dialog,bg=WHITE)
+        buttons.pack(fill='x',padx=20,pady=(16,18))
+        def finish(go_on):
+            answer['continue']=go_on
+            dialog.destroy()
+        ttk.Button(buttons,text='Taramaya Devam Et',style='Primary.TButton',command=lambda:finish(True)).pack(side='right')
+        ttk.Button(buttons,text='Taramayı Durdur',command=lambda:finish(False)).pack(side='right',padx=(0,8))
+        dialog.protocol('WM_DELETE_WINDOW',lambda:finish(True))
+        dialog.bind('<Return>',lambda event:finish(True))
+        dialog.grab_set()
+        dialog.focus_set()
+        self.root.wait_window(dialog)
+        return answer['continue']
 
     def stop(self):
         if self.busy:
@@ -1232,6 +1272,12 @@ class ArarApp:
         self.label(general,'Tamamlanma bildirimi',size=12,bold=True).pack(anchor='w',padx=20,pady=(12,6))
         notify_done=tk.BooleanVar(value=self.settings.notify_analysis_done)
         ttk.Checkbutton(general,text='Tarama bittiğinde uyarı göster',variable=notify_done).pack(anchor='w',padx=20)
+        self.label(general,'Belgeler arası bekleme',size=12,bold=True).pack(anchor='w',padx=20,pady=(12,6))
+        pause_new=tk.BooleanVar(value=self.settings.pause_before_new_document)
+        ttk.Checkbutton(general,text='Devam sayfasından sonra kapak gelirse taramayı durdurup sor',variable=pause_new).pack(anchor='w',padx=20)
+        self.label(general,'Önceki belgenin sayfalarını zımbalamak vb. için zaman tanır. "Taramayı Durdur" veya '
+                   '"Taramaya Devam Et" seçilene kadar sonraki sayfalar işlenmez.',
+                   size=9,color=MUTED,justify='left',wraplength=555).pack(anchor='w',padx=20,pady=(4,0))
 
         self.label(accuracy,'Mühür eşleşme eşiği',size=17,bold=True).pack(anchor='w',padx=20,pady=(18,12))
         review_missing=tk.BooleanVar(value=self.settings.review_missing_stamp)
@@ -1387,7 +1433,7 @@ class ArarApp:
                 if not 50<=stamp<=99 or not 50<=scan<=99:
                     raise ValueError('Mühür eşleşme eşikleri 50–99 arasında tam sayı olmalıdır.')
                 updated=replace(self.settings,grouping=grouping.get(),confirm_cover=confirm_cover.get(),
-                    notify_analysis_done=notify_done.get(),stamp_threshold=stamp,
+                    notify_analysis_done=notify_done.get(),pause_before_new_document=pause_new.get(),stamp_threshold=stamp,
                     scan_stamp_threshold=scan,
                     faint_blue_as_blue=faint_blue.get(),
                     review_missing_stamp=review_missing.get(),
@@ -1411,7 +1457,8 @@ class ArarApp:
             refresh_input_dirs()
             for variable,value in (
                 (grouping,defaults.grouping),(confirm_cover,defaults.confirm_cover),
-                (notify_done,defaults.notify_analysis_done),(review_missing,defaults.review_missing_stamp),
+                (notify_done,defaults.notify_analysis_done),(pause_new,defaults.pause_before_new_document),
+                (review_missing,defaults.review_missing_stamp),
                 (faint_blue,defaults.faint_blue_as_blue),
                 (review_mixed,defaults.review_mixed_stamp),(review_plain,defaults.review_plain_stamp),
                 (stamp_value,defaults.stamp_threshold),(scan_value,defaults.scan_stamp_threshold),
@@ -1513,6 +1560,15 @@ class ArarApp:
                         self.page_tree.see(str(i))
                         self._page_selected()
                         messagebox.showerror('İlk sayfa kontrolü',Path(page.source).name+'\n\n'+page.reason,parent=self.root)
+                elif kind=='pause':
+                    _,i,page=event
+                    if not self.cancel.is_set() and not self.closing:
+                        self.page_tree.selection_set(str(i))
+                        self.page_tree.see(str(i))
+                        self.status_var.set('Yeni belge başlıyor; tarama onayınızı bekliyor.')
+                        if not self._ask_continue_scan(self.pages[i]):
+                            self.cancel.set()
+                    self.resume.set()
                 elif kind=='analysis_done':
                     self._set_busy(False)
                     self._save_scan_review()
