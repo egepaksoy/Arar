@@ -107,7 +107,7 @@ class ArarApp:
                         font=('Segoe UI',10,'bold'))
         style.map('Primary.TButton',background=[('active','#066a75'),('disabled','#9bbec2')],
                   foreground=[('disabled',WHITE)])
-        # Scan controls: blue starts or continues, red stops; same shape as Primary.
+        # Scan controls: blue continues, red stops; same shape as Primary.
         for name,color,active,disabled in (('Blue',BLUE,'#17519b','#a8c2e4'),('Danger',RED,'#a31f1f','#e5b1b1')):
             style.configure(name+'.TButton',background=color,foreground=WHITE,borderwidth=0,
                             font=('Segoe UI',10,'bold'))
@@ -138,7 +138,7 @@ class ArarApp:
         self.add_btn.pack(side='left',padx=4)
         self.example_btn=ttk.Button(controls,text='Örnekleri aç',command=self.add_examples)
         self.example_btn.pack(side='left',padx=4)
-        self.analyze_btn=ttk.Button(controls,text='Analizi başlat',style='Blue.TButton',command=self.analyze)
+        self.analyze_btn=ttk.Button(controls,text='Analizi başlat',style='Primary.TButton',command=self.analyze)
         self.analyze_btn.pack(side='left',padx=4)
         self.stop_btn=ttk.Button(controls,text='Taramayı durdur',style='Danger.TButton',command=self.stop,state='disabled')
         self.stop_btn.pack(side='left',padx=4)
