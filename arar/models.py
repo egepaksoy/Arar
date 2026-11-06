@@ -12,7 +12,7 @@ class Settings:
     output_dir: str = str(ROOT / 'Çıktı')
     confirm_cover: bool = True
     notify_analysis_done: bool = True
-    pause_before_new_document: bool = False
+    pause_on_cover_or_review: bool = False
     stamp_threshold: int = 85
     scan_stamp_threshold: int = 74
     faint_blue_as_blue: bool = False
@@ -43,7 +43,7 @@ class Settings:
                 settings.grouping = 'shared'
             settings.confirm_cover = bool(settings.confirm_cover)
             settings.notify_analysis_done = bool(settings.notify_analysis_done)
-            settings.pause_before_new_document = bool(settings.pause_before_new_document)
+            settings.pause_on_cover_or_review = bool(settings.pause_on_cover_or_review)
             settings.review_missing_stamp = bool(settings.review_missing_stamp)
             settings.review_mixed_stamp = bool(settings.review_mixed_stamp)
             settings.review_plain_stamp = bool(settings.review_plain_stamp)

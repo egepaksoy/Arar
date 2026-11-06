@@ -237,14 +237,24 @@ mühür bulunamazsa hata gösterilir ve analiz durdurulur; sonraki sayfalar işl
 Diğer incelemeler sağdaki panelden yapılır; analiz bu kararları beklemeden devam eder.
 Önceden verilen manuel kapak onayı korunur.
 
-**Ayarlar → İşlem ayarları → Belgeler arası bekleme → Devam sayfasından sonra kapak
-gelirse taramayı durdurup sor** seçeneği varsayılan olarak kapalıdır. Açıkken analiz
-sırasında aynı PDF’de bir devam sayfasının ardından kapak sayfası gelirse tarama bekler
-ve **Taramayı Durdur** / **Taramaya Devam Et** sorulur. Böylece biten belgenin
-sayfalarını zımbalamak vb. için zaman kalır. Durdurulursa kalan sayfalar işlenmeden
-bekler; **Analizi başlat** ile yeniden başlatılabilir. Art arda gelen kapaklarda ve
-farklı PDF’lere geçişte soru sorulmaz. Arka planda çalışan otomatik klasör taramaları
-bu ayardan etkilenmez.
+**Ayarlar → İşlem ayarları → Belgeler arası bekleme → Kapak veya kapak olabilecek
+sayfa bulununca taramayı durdur** seçeneği varsayılan olarak kapalıdır. Açıkken analiz,
+aynı PDF’de bir devam sayfasının ardından kapak sayfası geldiğinde veya inceleme
+gerektiren bir sayfa bulunduğunda o sayfadan sonra durur ve tek **Tamam** düğmeli bir
+bildirim gösterir. Durduğu sayfa listede seçilir; sağdaki panelden karar verebilirsiniz.
+
+Tarama durmuşken **Onayla ve kaydet**, o ana kadar tamamlanan belgeleri kaydeder.
+Analiz edilen PDF’nin son kapağı (ortak gruplamada art arda gelen son kapaklar) henüz
+devam sayfası alabileceği için kaydedilmez. Kaydedilen sayfalar çalışma alanından
+çıkarılır; böylece karışıklık olmaz ve aynı sayfalar ikinci kez kaydedilmez. Bu sırada
+biten belgelerin sayfalarını zımbalamak vb. için zaman kalır.
+
+Üst çubuktaki **Taramayı durdur** analizi istediğiniz anda durdurur. **Taramaya devam et**,
+ister bu ayarla ister elle durdurulmuş olsun, kalan sayfalardan devam eder; önceki
+sonuçlar ve kararlar korunur. **Analizi başlat** ise tüm sayfaları baştan analiz eder.
+Art arda gelen kapaklarda, farklı PDF’lere geçişte ve son sayfada durulmaz. Arka planda
+çalışan otomatik klasör taramaları ve açılan otomatik taramaların kısmi kaydı bu
+ayardan etkilenmez.
 
 Mavi olmayan mühürlü Receiving Report sayfaları, sayfanın PDF içindeki konumundan
 bağımsız olarak **Ayarlar → Mühür kararları** bölümündeki iki seçenekle değerlendirilir:

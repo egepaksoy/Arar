@@ -546,7 +546,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(list(archive.rglob('Arar_onay.json')),[])
 
     def test_defaults_restore_every_setting_only_after_save(self):
-        previous=Settings(grouping='sequential',confirm_cover=False,pause_before_new_document=True,
+        previous=Settings(grouping='sequential',confirm_cover=False,pause_on_cover_or_review=True,
             notify_analysis_done=False,stamp_threshold=95,scan_stamp_threshold=90,
             review_missing_stamp=False,review_mixed_stamp=False,review_plain_stamp=False,
             examples_dir=self.temp.name,output_dir=self.temp.name)
@@ -832,45 +832,120 @@ class DesktopTests(unittest.TestCase):
         error.assert_not_called()
         self.assertEqual([page.effective_state for page in self.app.pages],['cover','cover'])
 
-    def analyze_documents(self,states,answer=True,sources=None):
-        """Run the analysis over pages decided as states; returns the pause dialog mock."""
-        sources=sources or [str(self.source)]*len(states)
-        self.app.pages=[PageResult(source,i) for i,source in enumerate(sources)]
+    def pdf(self,name,count):
+        path=Path(self.temp.name)/name
+        writer=PdfWriter()
+        for _ in range(count):
+            writer.add_blank_page(width=595,height=842)
+        with path.open('wb') as handle:
+            writer.write(handle)
+        return str(path)
+
+    def run_analysis(self,states,start=None):
+        """Analyze self.app.pages with page i decided as states[i]; returns the notice mock."""
         def analyze(result,cancel,**kwargs):
-            cover=states[result.index]=='cover'
+            state=states[result.index]
+            cover=state=='cover'
             result.barcode=f'R{result.index}' if cover else ''
             result.target_found=cover
             result.stamp='blue' if cover else 'none'
-            result.state=states[result.index]
+            result.state=state
             return result
         with patch('arar.app.analyze_page',side_effect=analyze), \
-                patch.object(self.app,'_ask_continue_scan',return_value=answer) as ask:
-            self.app.analyze()
+                patch('arar.app.messagebox.showinfo') as notice:
+            (self.app.analyze if start is None else self.app.continue_analysis)()
             self.pump_until(lambda:not self.app.busy)
-        return ask
+        return notice
 
-    def test_cover_after_following_page_pauses_and_continues_when_asked(self):
-        self.app.settings.pause_before_new_document=True
-        ask=self.analyze_documents(['cover','attachment','cover','attachment','cover'])
-        self.assertEqual([call.args[0].index for call in ask.call_args_list],[2,4])
-        self.assertEqual([page.effective_state for page in self.app.pages],
-                         ['cover','attachment','cover','attachment','cover'])
+    def load_documents(self,states,sources=None):
+        source=self.pdf('scan.pdf',len(states))
+        sources=sources or [source]*len(states)
+        self.app.pages=[PageResult(path,i) for i,path in enumerate(sources)]
+        self.app.sources=list(dict.fromkeys(sources))
+        self.app._refresh()
 
-    def test_stop_answer_ends_the_scan_at_the_new_cover(self):
-        self.app.settings.pause_before_new_document=True
-        ask=self.analyze_documents(['cover','attachment','cover','attachment'],answer=False)
-        ask.assert_called_once()
-        self.assertEqual([page.effective_state for page in self.app.pages],['cover','attachment','cover','pending'])
-        self.assertIn('durduruldu',self.app.status_var.get())
+    def test_cover_after_following_page_stops_and_continue_resumes(self):
+        self.app.settings.pause_on_cover_or_review=True
+        states=['cover','attachment','cover','attachment','cover']
+        self.load_documents(states)
+        notice=self.run_analysis(states)
+        notice.assert_called_once()
+        self.assertEqual(notice.call_args.args[0],'Tarama durduruldu')
+        self.assertIn('Taramaya devam et',notice.call_args.args[1])
+        self.assertEqual([p.effective_state for p in self.app.pages],['cover','attachment','cover','pending','pending'])
+        self.assertEqual(self.app.page_tree.selection(),('2',))
+        self.assertEqual(str(self.app.continue_btn.cget('state')),'normal')
+        self.assertEqual(str(self.app.stop_btn.cget('state')),'disabled')
+        # The cover at the last page needs no stop: nothing is left to scan.
+        notice=self.run_analysis(states,start=True)
+        notice.assert_not_called()
+        self.assertEqual([p.effective_state for p in self.app.pages],states)
+        self.assertEqual(str(self.app.continue_btn.cget('state')),'disabled')
 
-    def test_no_pause_when_off_for_adjacent_covers_or_a_new_pdf(self):
-        self.assertFalse(Settings().pause_before_new_document)
-        self.analyze_documents(['cover','attachment','cover']).assert_not_called()
-        self.app.settings.pause_before_new_document=True
-        self.analyze_documents(['cover','cover','attachment']).assert_not_called()
-        other=str(Path(self.temp.name)/'other.pdf')
-        self.analyze_documents(['cover','attachment','cover'],
-                               sources=[str(self.source),str(self.source),other]).assert_not_called()
+    def test_review_page_stops_the_scan(self):
+        self.app.settings.pause_on_cover_or_review=True
+        states=['cover','attachment','review','attachment']
+        self.load_documents(states)
+        self.run_analysis(states).assert_called_once()
+        self.assertEqual([p.effective_state for p in self.app.pages],['cover','attachment','review','pending'])
+
+    def test_manual_stop_can_be_continued(self):
+        states=['cover','attachment','attachment']
+        self.load_documents(states)
+        for page in self.app.pages[1:]:
+            page.state='pending'
+        self.app.pages[0].state='cover'
+        self.app.pages[0].barcode='R0'
+        self.app._refresh()
+        self.assertEqual(str(self.app.continue_btn.cget('state')),'normal')
+        self.run_analysis(states,start=True).assert_not_called()
+        self.assertEqual([p.effective_state for p in self.app.pages],states)
+
+    def test_no_stop_when_off_for_adjacent_covers_or_a_new_pdf(self):
+        self.assertFalse(Settings().pause_on_cover_or_review)
+        states=['cover','attachment','cover','attachment']
+        self.load_documents(states)
+        self.run_analysis(states).assert_not_called()
+        self.app.settings.pause_on_cover_or_review=True
+        states=['cover','cover','attachment']
+        self.load_documents(states)
+        self.run_analysis(states).assert_not_called()
+        other=self.pdf('other.pdf',3)
+        states=['cover','attachment','cover','attachment']
+        self.load_documents(states,sources=[self.pdf('first.pdf',2)]*2+[other]*2)
+        for i,page in enumerate(self.app.pages):
+            page.index=i%2
+        self.run_analysis(['cover','attachment']*2).assert_not_called()
+
+    def test_saving_during_a_stop_keeps_the_open_document_and_removes_saved_pages(self):
+        self.app.settings.pause_on_cover_or_review=True
+        self.app.settings.archive_dir=str(Path(self.temp.name)/'archive')
+        states=['cover','attachment','cover','cover','attachment','cover','attachment']
+        self.load_documents(states)
+        self.run_analysis(states)
+        # Stopped at the cover on page 2: only the first document is closed.
+        self.assertEqual([p.effective_state for p in self.app.pages][:4],states[:3]+['pending'])
+        self.assertEqual(self.app._export_pages(),self.app.pages[:2])
+        self.assertEqual(str(self.app.export_btn.cget('state')),'normal')
+        self.assertIn('tamamlanan 1 belge',self.app.export_note.cget('text'))
+        remaining=self.app.pages[2:]
+        with patch('arar.app.messagebox.showinfo'):
+            self.app.export_btn.invoke()
+            self.pump_until(lambda:not self.app.busy)
+        saved=list((Path(self.temp.name)/'archive').rglob('*.pdf'))
+        self.assertEqual([path.name for path in saved],['R0.pdf'])
+        self.assertEqual(self.app.pages,remaining)
+        self.assertEqual(self.app.page_tree.get_children(),tuple(str(i) for i in range(len(remaining))))
+        self.assertEqual(str(self.app.continue_btn.cget('state')),'normal')
+        # Nothing is closed yet in what is left, so a second save cannot repeat the first.
+        self.assertEqual(self.app._export_pages(),[])
+        self.assertEqual(str(self.app.export_btn.cget('state')),'disabled')
+        # Next stop is the cover on page 5. Adjacent covers 2 and 3 share page 4
+        # and are closed now; the document of page 5 stays open.
+        self.run_analysis(states,start=True).assert_called_once()
+        self.assertEqual([p.index for p in self.app._export_pages()],[2,3,4])
+        self.run_analysis(states,start=True).assert_not_called()
+        self.assertEqual(self.app._export_pages(),self.app.pages)
 
     def test_pause_setting_is_saved(self):
         with patch('arar.models.ROOT',Path(self.temp.name)):
@@ -878,25 +953,14 @@ class DesktopTests(unittest.TestCase):
             self.root.update()
             dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
             option=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TCheckbutton'
-                        and widget.cget('text')=='Devam sayfasından sonra kapak gelirse taramayı durdurup sor')
+                        and widget.cget('text')=='Kapak veya kapak olabilecek sayfa bulununca taramayı durdur')
             self.assertFalse(option.instate(['selected']))
             option.invoke()
             save=next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
                       and widget.cget('text')=='Ayarları kaydet')
             save.invoke()
             self.root.update()
-            self.assertTrue(Settings.load().pause_before_new_document)
-
-    def test_continue_dialog_buttons_answer_the_question(self):
-        page=PageResult(str(self.source),1,barcode='R1',target_found=True)
-        for label,expected in (('Taramaya Devam Et',True),('Taramayı Durdur',False)):
-            with self.subTest(label=label):
-                def press():
-                    dialog=next(widget for widget in self.root.winfo_children() if isinstance(widget,tk.Toplevel))
-                    next(widget for widget in self.descendants(dialog) if widget.winfo_class()=='TButton'
-                         and widget.cget('text')==label).invoke()
-                self.root.after(50,press)
-                self.assertIs(self.app._ask_continue_scan(page),expected)
+            self.assertTrue(Settings.load().pause_on_cover_or_review)
     def test_stamp_review_settings_are_saved(self):
         with patch('arar.models.ROOT',Path(self.temp.name)):
             self.app.show_settings()
